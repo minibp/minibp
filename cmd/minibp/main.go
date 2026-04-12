@@ -108,6 +108,9 @@ func main() {
 	srcDir := "."
 	if *all && len(flag.Args()) > 0 {
 		srcDir = flag.Args()[0]
+	} else if len(flag.Args()) > 0 {
+		// For single file, use the directory containing the .bp file
+		srcDir = filepath.Dir(flag.Args()[0])
 	}
 
 	// Collect all .bp files
@@ -143,6 +146,8 @@ func main() {
 			if mod, ok := def.(*parser.Module); ok {
 				name := getStringProp(mod, "name")
 				if name != "" {
+					// Expand globs in srcs before storing module
+					expandGlobsInModule(mod, srcDir)
 					modules[name] = mod
 				}
 			}
@@ -183,11 +188,14 @@ func main() {
 	absOutFile, _ := filepath.Abs(*outFile)
 	absBuildDir := filepath.Dir(absOutFile)
 	absSourceDir, _ := filepath.Abs(srcDir)
-	relPath, _ := filepath.Rel(absBuildDir, absSourceDir)
 
+	// Only add prefix if source and build directories are different
 	prefix := ""
-	if relPath != "" && relPath != "." {
-		prefix = relPath + "/"
+	if absBuildDir != absSourceDir {
+		relPath, err := filepath.Rel(absBuildDir, absSourceDir)
+		if err == nil && relPath != "." {
+			prefix = relPath + "/"
+		}
 	}
 
 	outDir := filepath.Dir(absOutFile)
@@ -236,4 +244,77 @@ func getListProp(m *parser.Module, name string) []string {
 		}
 	}
 	return nil
+}
+
+// expandGlobsInModule expands glob patterns in module srcs
+func expandGlobsInModule(m *parser.Module, baseDir string) {
+	if m.Map == nil {
+		return
+	}
+
+	for _, prop := range m.Map.Properties {
+		if prop.Name == "srcs" {
+			if l, ok := prop.Value.(*parser.List); ok {
+				var expandedSrcs []parser.Expression
+				seen := make(map[string]bool)
+
+				for _, v := range l.Values {
+					if s, ok := v.(*parser.String); ok {
+						pattern := s.Value
+						if strings.Contains(pattern, "*") {
+							matches := expandGlob(pattern, baseDir)
+							for _, match := range matches {
+								if !seen[match] {
+									seen[match] = true
+									expandedSrcs = append(expandedSrcs, &parser.String{Value: match})
+								}
+							}
+						} else {
+							if !seen[pattern] {
+								seen[pattern] = true
+								expandedSrcs = append(expandedSrcs, v)
+							}
+						}
+					}
+				}
+
+				if len(expandedSrcs) > 0 {
+					l.Values = expandedSrcs
+				}
+			}
+		}
+	}
+}
+
+func expandGlob(pattern, baseDir string) []string {
+	var result []string
+
+	if strings.Contains(pattern, "**") {
+		dir := baseDir
+		suffix := ""
+		if idx := strings.Index(pattern, "/**"); idx >= 0 {
+			dir = filepath.Join(baseDir, pattern[:idx])
+			suffix = pattern[idx+3:]
+		}
+
+		filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+			relPath, _ := filepath.Rel(baseDir, path)
+			if suffix == "" || strings.HasSuffix(path, suffix) {
+				result = append(result, relPath)
+			}
+			return nil
+		})
+	} else {
+		fullPattern := filepath.Join(baseDir, pattern)
+		matches, _ := filepath.Glob(fullPattern)
+		for _, match := range matches {
+			relPath, _ := filepath.Rel(baseDir, match)
+			result = append(result, relPath)
+		}
+	}
+
+	return result
 }

@@ -122,12 +122,36 @@ func (g *Generator) Generate(w io.Writer) error {
 		nw.Comment("")
 	}
 
-	// Collect used rules and write their definitions
-	usedRules := g.collectUsedRules()
-	for _, ruleName := range usedRules {
-		if rule, ok := g.rules[ruleName]; ok {
+	// Collect used module types
+	usedModuleTypes := g.collectUsedModuleTypes()
+
+	// Use a map to track which ninja rules have been written to avoid duplicates
+	writtenNinjaRules := make(map[string]bool)
+
+	// Write rule definitions for all used module types
+	for _, moduleType := range usedModuleTypes {
+		if rule, ok := g.rules[moduleType]; ok {
 			ruleDef := rule.NinjaRule()
-			fmt.Fprint(w, ruleDef)
+			if ruleDef == "" {
+				continue
+			}
+			// Split by "rule " to handle multiple rule definitions
+			parts := strings.Split(ruleDef, "rule ")
+			for i, part := range parts {
+				if i == 0 && part == "" {
+					continue // Skip empty first part
+				}
+				if part == "" {
+					continue
+				}
+				// Extract rule name (first word)
+				lines := strings.SplitN(part, "\n", 2)
+				ninjaRuleName := strings.TrimSpace(lines[0])
+				if ninjaRuleName != "" && !writtenNinjaRules[ninjaRuleName] {
+					writtenNinjaRules[ninjaRuleName] = true
+					fmt.Fprintf(w, "rule %s", part)
+				}
+			}
 		}
 	}
 
@@ -254,7 +278,11 @@ func (g *Generator) adjustPaths(edge string) string {
 
 	inputs := fields[1:]
 	for i, input := range inputs {
-		if !strings.HasPrefix(input, "$") {
+		// Skip variables and paths that already have the prefix or are absolute
+		if !strings.HasPrefix(input, "$") &&
+			!strings.HasPrefix(input, g.pathPrefix) &&
+			!strings.HasPrefix(input, "/") &&
+			!strings.HasPrefix(input, "..") {
 			inputs[i] = g.pathPrefix + input
 		}
 	}
@@ -262,8 +290,8 @@ func (g *Generator) adjustPaths(edge string) string {
 	return colonPart + fields[0] + " " + strings.Join(inputs, " ") + "\n" + rest
 }
 
-// collectUsedRules returns a deduplicated list of rule names used by modules
-func (g *Generator) collectUsedRules() []string {
+// collectUsedModuleTypes returns a deduplicated list of module types used
+func (g *Generator) collectUsedModuleTypes() []string {
 	seen := make(map[string]bool)
 	var result []string
 
@@ -278,4 +306,29 @@ func (g *Generator) collectUsedRules() []string {
 	}
 
 	return result
+}
+
+// collectRulesForModule returns all ninja rule names used by a build rule
+func (g *Generator) collectRulesForModule(rule BuildRule) []string {
+	// Extract rule names from NinjaRule() output
+	ruleDef := rule.NinjaRule()
+	var rules []string
+	seen := make(map[string]bool)
+
+	lines := strings.Split(ruleDef, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "rule ") {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				name := parts[1]
+				if !seen[name] {
+					seen[name] = true
+					rules = append(rules, name)
+				}
+			}
+		}
+	}
+
+	return rules
 }
