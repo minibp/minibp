@@ -34,6 +34,10 @@ func (r *mockRule) Outputs(m *parser.Module) []string {
 	return []string{getName(m)}
 }
 
+func (r *mockRule) Desc(m *parser.Module, srcFile string) string {
+	return "mock"
+}
+
 func TestNewWriter(t *testing.T) {
 	var buf bytes.Buffer
 	w := NewWriter(&buf)

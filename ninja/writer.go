@@ -60,3 +60,13 @@ func (w *Writer) Comment(text string) {
 		fmt.Fprintln(w.w)
 	}
 }
+
+// Desc writes a ninja build edge description
+// Format: # //<source_dir>:<module_name> <action> <src_file>
+func (w *Writer) Desc(sourceDir, moduleName, action string, srcFile ...string) {
+	srcStr := ""
+	if len(srcFile) > 0 && srcFile[0] != "" {
+		srcStr = " " + srcFile[0]
+	}
+	fmt.Fprintf(w.w, "# //%s:%s %s%s\n", sourceDir, moduleName, action, srcStr)
+}
