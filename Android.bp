@@ -1,0 +1,127 @@
+// Android.bp - Build file for minibp itself
+// This demonstrates using minibp to build itself
+
+// Go binary for minibp CLI
+go_binary {
+    name: "minibp",
+    srcs: [
+        "cmd/minibp/main.go",
+    ],
+    deps: [
+        ":libparser",
+        ":libdag",
+        ":libninja",
+        ":libmodule",
+    ],
+}
+
+// Parser library
+go_library {
+    name: "libparser",
+    srcs: [
+        "parser/ast.go",
+        "parser/lexer.go",
+        "parser/parser.go",
+    ],
+}
+
+// DAG library
+go_library {
+    name: "libdag",
+    srcs: [
+        "dag/graph.go",
+    ],
+    deps: [
+        ":libmodule",
+    ],
+}
+
+// Module library
+go_library {
+    name: "libmodule",
+    srcs: [
+        "module/module.go",
+        "module/registry.go",
+        "module/types.go",
+    ],
+    deps: [
+        ":libparser",
+    ],
+}
+
+// Ninja generator library
+go_library {
+    name: "libninja",
+    srcs: [
+        "ninja/gen.go",
+        "ninja/rules.go",
+        "ninja/writer.go",
+    ],
+    deps: [
+        ":libparser",
+        ":libdag",
+        ":libmodule",
+    ],
+}
+
+// Test binary for parser
+go_binary {
+    name: "test_parser",
+    srcs: [
+        "parser/parser_test.go",
+    ],
+    deps: [
+        ":libparser",
+    ],
+}
+
+// Test binary for DAG
+go_binary {
+    name: "test_dag",
+    srcs: [
+        "dag/graph_test.go",
+    ],
+    deps: [
+        ":libdag",
+        ":libmodule",
+        ":libparser",
+    ],
+}
+
+// Test binary for ninja
+go_binary {
+    name: "test_ninja",
+    srcs: [
+        "ninja/ninja_test.go",
+    ],
+    deps: [
+        ":libninja",
+        ":libparser",
+        ":libdag",
+        ":libmodule",
+    ],
+}
+
+// Test binary for module
+go_binary {
+    name: "test_module",
+    srcs: [
+        "module/module_test.go",
+    ],
+    deps: [
+        ":libmodule",
+        ":libparser",
+    ],
+}
+
+// Build all tests
+custom {
+    name: "test_all",
+    cmd: "go test ./...",
+    srcs: [
+        "**/*.go",
+    ],
+    outs: ["test_result.txt"],
+}
+
+// Note: Use './minibp -o build.ninja Android.bp' to regenerate build.ninja

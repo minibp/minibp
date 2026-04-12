@@ -1,0 +1,6 @@
+{
+    "app_name": "MiniBP Example",
+    "version": "1.0.0",
+    "debug": true,
+    "port": 8080
+}

@@ -1,0 +1,19 @@
+// api.proto - Protocol buffer definition
+syntax = "proto3";
+
+package api;
+
+message Request {
+    string action = 1;
+    bytes data = 2;
+}
+
+message Response {
+    bool success = 1;
+    string message = 2;
+    bytes result = 3;
+}
+
+service ApiService {
+    rpc Execute(Request) returns (Response);
+}

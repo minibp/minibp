@@ -1,0 +1,104 @@
+// Example Blueprint file for minibp
+// This demonstrates all 7 supported module types
+
+// ============================================================================
+// C/C++ Modules
+// ============================================================================
+
+// C static library
+cc_library {
+    name: "libutil",
+    srcs: ["util.c", "helper.c"],
+    cflags: ["-Wall", "-O2"],
+}
+
+// C++ static library
+cpp_library {
+    name: "libcore",
+    srcs: ["core.cpp", "utils.cpp"],
+    cflags: ["-std=c++17", "-Wall"],
+}
+
+// C binary executable
+cc_binary {
+    name: "hello",
+    srcs: ["main.c"],
+    deps: [
+        ":libutil",
+    ],
+    cflags: ["-Wall", "-g"],
+}
+
+// C++ binary executable
+cpp_binary {
+    name: "app",
+    srcs: ["main.cpp"],
+    deps: [
+        ":libcore",
+    ],
+}
+
+// ============================================================================
+// Go Modules
+// ============================================================================
+
+// Go library (archive)
+go_library {
+    name: "libapi",
+    srcs: ["api.go", "types.go"],
+}
+
+// Go binary executable
+go_binary {
+    name: "server",
+    srcs: ["main.go"],
+    deps: [
+        ":libapi",
+    ],
+}
+
+// ============================================================================
+// Java Modules
+// ============================================================================
+
+// Java library (JAR)
+java_library {
+    name: "libjava",
+    srcs: [
+        "src/com/example/Util.java",
+        "src/com/example/Helper.java",
+    ],
+}
+
+// Java binary (executable JAR with Main-Class)
+java_binary {
+    name: "javapp",
+    srcs: ["src/com/example/Main.java"],
+    main_class: "com.example.Main",
+    deps: [
+        ":libjava",
+    ],
+}
+
+// ============================================================================
+// Custom Command
+// ============================================================================
+
+// Generate protobuf files
+custom {
+    name: "gen_proto",
+    cmd: "protoc --cpp_out=out api.proto",
+    srcs: ["api.proto"],
+    outs: [
+        "out/api.pb.cc",
+        "out/api.pb.h",
+    ],
+}
+
+// Copy files
+custom {
+    name: "copy_assets",
+    cmd: "cp $in $out",
+    srcs: ["assets/config.json"],
+    outs: ["out/config.json"],
+}
