@@ -204,6 +204,14 @@ func main() {
 	gen.SetSourceDir(srcDir)
 	gen.SetOutputDir(outDir)
 	gen.SetPathPrefix(prefix)
+
+	regenCmd := os.Args[0] + " -o " + *outFile
+	for _, f := range files {
+		regenCmd += " " + f
+	}
+	gen.SetRegen(regenCmd, files, *outFile)
+	gen.SetWorkDir(srcDir)
+
 	if err := gen.Generate(out); err != nil {
 		fmt.Fprintf(os.Stderr, "Error generating ninja: %v\n", err)
 		os.Exit(1)

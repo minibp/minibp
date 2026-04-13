@@ -526,12 +526,25 @@ func (r *goBinary) Outputs(m *parser.Module) []string {
 func (r *goBinary) NinjaEdge(m *parser.Module) string {
 	name := getName(m)
 	srcs := getSrcs(m)
+	deps := getListProp(m, "deps")
 	if name == "" || len(srcs) == 0 {
 		return ""
 	}
 	goflags := getGoflags(m)
 	out := r.Outputs(m)[0]
-	return fmt.Sprintf("build %s: go_build %s\n flags = %s\n", out, strings.Join(srcs, " "), goflags)
+
+	var libFiles []string
+	for _, dep := range deps {
+		depName := strings.TrimPrefix(dep, ":")
+		libFiles = append(libFiles, depName+".a")
+	}
+
+	srcStr := strings.Join(srcs, " ")
+	if len(libFiles) > 0 {
+		libStr := strings.Join(libFiles, " ")
+		return fmt.Sprintf("build %s: go_build %s | %s\n flags = %s\n", out, srcStr, libStr, goflags)
+	}
+	return fmt.Sprintf("build %s: go_build %s\n flags = %s\n", out, srcStr, goflags)
 }
 func (r *goBinary) Desc(m *parser.Module, srcFile string) string { return "go" }
 
@@ -874,6 +887,10 @@ func (r *customRule) Outputs(m *parser.Module) []string {
 	return getListProp(m, "outs")
 }
 func (r *customRule) NinjaEdge(m *parser.Module) string {
+	return customRuleEdge(m, "")
+}
+
+func customRuleEdge(m *parser.Module, workDir string) string {
 	srcs := getListProp(m, "srcs")
 	outs := getListProp(m, "outs")
 	cmd := getStringProp(m, "cmd")
@@ -888,10 +905,34 @@ func (r *customRule) NinjaEdge(m *parser.Module) string {
 	actualCmd = strings.ReplaceAll(actualCmd, "$in", srcStr)
 	actualCmd = strings.ReplaceAll(actualCmd, "$out", outStr)
 
-	if len(excludeDirs) > 0 {
+	if len(excludeDirs) > 0 && workDir != "" {
+		excluded := make(map[string]bool)
 		for _, dir := range excludeDirs {
-			actualCmd = strings.ReplaceAll(actualCmd, "./...", "$(shell go list ./... | grep -v /"+dir+")")
+			excluded[dir] = true
 		}
+		var pkgList []string
+		filepath.Walk(workDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil || !info.IsDir() {
+				return nil
+			}
+			rel, _ := filepath.Rel(workDir, path)
+			if rel == "." || strings.HasPrefix(rel, ".") {
+				return nil
+			}
+			parts := strings.SplitN(rel, string(filepath.Separator), 2)
+			if len(parts) > 0 && excluded[parts[0]] {
+				return filepath.SkipDir
+			}
+			files, _ := os.ReadDir(path)
+			for _, f := range files {
+				if !f.IsDir() && strings.HasSuffix(f.Name(), ".go") && !strings.HasPrefix(f.Name(), "_") && !strings.HasSuffix(f.Name(), "_test.go") {
+					pkgList = append(pkgList, "./"+rel)
+					break
+				}
+			}
+			return nil
+		})
+		actualCmd = strings.ReplaceAll(actualCmd, "./...", strings.Join(pkgList, " "))
 	}
 
 	hash := 0
