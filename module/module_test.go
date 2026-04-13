@@ -9,7 +9,7 @@ import (
 // MockFactory implements Factory interface for testing
 type MockFactory struct{}
 
-func (m *MockFactory) Create(ast *parser.Module) (Module, error) {
+func (m *MockFactory) Create(ast *parser.Module, eval *parser.Evaluator) (Module, error) {
 	return &BaseModule{
 		Name_: getStringFromAST(ast, "name"),
 		Type_: ast.Type,
@@ -91,11 +91,11 @@ func TestRegistryLookupUnknown(t *testing.T) {
 type TestFactoryA struct{}
 type TestFactoryB struct{}
 
-func (f *TestFactoryA) Create(ast *parser.Module) (Module, error) {
+func (f *TestFactoryA) Create(ast *parser.Module, eval *parser.Evaluator) (Module, error) {
 	return &BaseModule{Name_: "A", Type_: "type_a"}, nil
 }
 
-func (f *TestFactoryB) Create(ast *parser.Module) (Module, error) {
+func (f *TestFactoryB) Create(ast *parser.Module, eval *parser.Evaluator) (Module, error) {
 	return &BaseModule{Name_: "B", Type_: "type_b"}, nil
 }
 
@@ -177,7 +177,7 @@ func TestCreateModuleFromAST(t *testing.T) {
 		},
 	}
 
-	module, err := Create(ast)
+	module, err := Create(ast, nil)
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestCreateUnknownType(t *testing.T) {
 	Registry = make(map[string]Factory)
 
 	ast := &parser.Module{Type: "unknown_type"}
-	_, err := Create(ast)
+	_, err := Create(ast, nil)
 	if err == nil {
 		t.Error("Expected error for unknown module type")
 	}

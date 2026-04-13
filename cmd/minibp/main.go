@@ -1,4 +1,3 @@
-// cmd/minibp/main.go - CLI entry point
 package main
 
 import (
@@ -12,7 +11,6 @@ import (
 	"minibp/parser"
 )
 
-// Simple graph structure for dependency ordering
 type Graph struct {
 	nodes map[string]*parser.Module
 	edges map[string][]string
@@ -80,6 +78,14 @@ func (g *Graph) TopoSort() ([][]string, error) {
 			return nil, fmt.Errorf("circular dependency detected")
 		}
 
+		for i := 0; i < len(currentLevel)-1; i++ {
+			for j := i + 1; j < len(currentLevel); j++ {
+				if currentLevel[i] > currentLevel[j] {
+					currentLevel[i], currentLevel[j] = currentLevel[j], currentLevel[i]
+				}
+			}
+		}
+
 		levels = append(levels, currentLevel)
 		for _, name := range currentLevel {
 			visited[name] = true
@@ -100,24 +106,23 @@ func main() {
 		cxxFlag  = flag.String("cxx", "", "C++ compiler (default: g++)")
 		arFlag   = flag.String("ar", "", "archiver (default: ar)")
 		archFlag = flag.String("arch", "", "target architecture (arm, arm64, x86, x86_64)")
+		hostFlag = flag.Bool("host", false, "build for host (overrides arch)")
+		osFlag   = flag.String("os", "", "target OS (linux, darwin, windows)")
 	)
 	flag.Parse()
 
 	if len(flag.Args()) < 1 && !*all {
-		fmt.Fprintln(os.Stderr, "Usage: minibp [-o output] [-a] [-cc CC] [-cxx CXX] [-ar AR] [-arch ARCH] <file.bp | directory>")
+		fmt.Fprintln(os.Stderr, "Usage: minibp [-o output] [-a] [-cc CC] [-cxx CXX] [-ar AR] [-arch ARCH] [-host] [-os OS] <file.bp | directory>")
 		os.Exit(1)
 	}
 
-	// Determine source directory
 	srcDir := "."
 	if *all && len(flag.Args()) > 0 {
 		srcDir = flag.Args()[0]
 	} else if len(flag.Args()) > 0 {
-		// For single file, use the directory containing the .bp file
 		srcDir = filepath.Dir(flag.Args()[0])
 	}
 
-	// Collect all .bp files
 	var files []string
 	if *all {
 		bpFiles, err := filepath.Glob(filepath.Join(srcDir, "*.bp"))
@@ -130,8 +135,17 @@ func main() {
 		files = flag.Args()
 	}
 
-	// Parse all files
-	modules := make(map[string]*parser.Module)
+	eval := parser.NewEvaluator()
+	eval.SetConfig("arch", *archFlag)
+	eval.SetConfig("host", fmt.Sprintf("%v", *hostFlag))
+	if *osFlag != "" {
+		eval.SetConfig("os", *osFlag)
+	} else {
+		eval.SetConfig("os", "linux")
+	}
+	eval.SetConfig("target", *archFlag)
+
+	var allDefs []parser.Definition
 	for _, file := range files {
 		f, err := os.Open(file)
 		if err != nil {
@@ -146,50 +160,57 @@ func main() {
 			os.Exit(1)
 		}
 
-		for _, def := range parsedFile.Defs {
-			if mod, ok := def.(*parser.Module); ok {
-				name := getStringProp(mod, "name")
-				if name != "" {
-					// Expand globs in srcs before storing module
-					expandGlobsInModule(mod, srcDir)
-					// Merge arch-specific overrides if target arch is set
-					if *archFlag != "" && mod.Arch != nil {
-						mergeArchProps(mod, *archFlag)
-					}
-					modules[name] = mod
-				}
-			}
-		}
+		allDefs = append(allDefs, parsedFile.Defs...)
 	}
 
-	// Build dependency graph
+	eval.ProcessAssignmentsFromDefs(allDefs)
+
+	modules := make(map[string]*parser.Module)
+	for _, def := range allDefs {
+		mod, ok := def.(*parser.Module)
+		if !ok {
+			continue
+		}
+		name := getStringPropEval(mod, "name", eval)
+		if name == "" {
+			continue
+		}
+
+		eval.EvalModule(mod)
+		expandGlobsInModule(mod, srcDir)
+		mergeVariantProps(mod, *archFlag, *hostFlag, eval)
+		modules[name] = mod
+	}
+
 	graph := NewGraph()
 	for name, mod := range modules {
 		graph.AddNode(name, mod)
 	}
 
-	// Add edges for deps
 	for name, mod := range modules {
-		deps := getListProp(mod, "deps")
+		deps := getListPropEval(mod, "deps", eval)
 		for _, dep := range deps {
 			depName := strings.TrimPrefix(dep, ":")
 			graph.AddEdge(name, depName)
 		}
-		sharedLibs := getListProp(mod, "shared_libs")
+		sharedLibs := getListPropEval(mod, "shared_libs", eval)
 		for _, dep := range sharedLibs {
+			depName := strings.TrimPrefix(dep, ":")
+			graph.AddEdge(name, depName)
+		}
+		headerLibs := getListPropEval(mod, "header_libs", eval)
+		for _, dep := range headerLibs {
 			depName := strings.TrimPrefix(dep, ":")
 			graph.AddEdge(name, depName)
 		}
 	}
 
-	// Get all rules
 	rules := ninja.GetAllRules()
 	ruleMap := make(map[string]ninja.BuildRule)
 	for _, r := range rules {
 		ruleMap[r.Name()] = r
 	}
 
-	// Generate ninja file
 	out, err := os.Create(*outFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating output: %v\n", err)
@@ -197,12 +218,10 @@ func main() {
 	}
 	defer out.Close()
 
-	// Calculate relative path from output dir to source dir
 	absOutFile, _ := filepath.Abs(*outFile)
 	absBuildDir := filepath.Dir(absOutFile)
 	absSourceDir, _ := filepath.Abs(srcDir)
 
-	// Only add prefix if source and build directories are different
 	prefix := ""
 	if absBuildDir != absSourceDir {
 		relPath, err := filepath.Rel(absBuildDir, absSourceDir)
@@ -247,6 +266,10 @@ func main() {
 }
 
 func getStringProp(m *parser.Module, name string) string {
+	return ninja.GetStringProp(m, name)
+}
+
+func getStringPropEval(m *parser.Module, name string, eval *parser.Evaluator) string {
 	if m.Map == nil {
 		return ""
 	}
@@ -255,43 +278,54 @@ func getStringProp(m *parser.Module, name string) string {
 			if s, ok := prop.Value.(*parser.String); ok {
 				return s.Value
 			}
+			if eval != nil {
+				val := eval.Eval(prop.Value)
+				if s, ok := val.(string); ok {
+					return s
+				}
+			}
 		}
 	}
 	return ""
 }
 
 func getListProp(m *parser.Module, name string) []string {
+	return ninja.GetListProp(m, name)
+}
+
+func getListPropEval(m *parser.Module, name string, eval *parser.Evaluator) []string {
 	if m.Map == nil {
 		return nil
 	}
 	for _, prop := range m.Map.Properties {
 		if prop.Name == name {
 			if l, ok := prop.Value.(*parser.List); ok {
-				var result []string
-				for _, v := range l.Values {
-					if s, ok := v.(*parser.String); ok {
-						result = append(result, s.Value)
-					}
-				}
-				return result
+				return parser.EvalToStringList(l, eval)
 			}
 		}
 	}
 	return nil
 }
 
-// mergeArchProps merges arch-specific properties into the module's main Map.
-// For list properties (srcs, cflags, etc.), arch values are appended.
-// For scalar properties (strings), arch values override base values.
-func mergeArchProps(m *parser.Module, arch string) {
-	archMap, ok := m.Arch[arch]
-	if !ok || archMap == nil {
+func mergeVariantProps(m *parser.Module, arch string, host bool, eval *parser.Evaluator) {
+	if arch != "" && m.Arch != nil {
+		mergeMapProps(m, m.Arch[arch])
+	}
+	if host && m.Host != nil {
+		mergeMapProps(m, m.Host)
+	}
+	if !host && m.Target != nil {
+		mergeMapProps(m, m.Target)
+	}
+}
+
+func mergeMapProps(m *parser.Module, override *parser.Map) {
+	if override == nil {
 		return
 	}
-	for _, prop := range archMap.Properties {
+	for _, prop := range override.Properties {
 		switch prop.Value.(type) {
 		case *parser.List:
-			// Append to existing list
 			merged := false
 			for _, baseProp := range m.Map.Properties {
 				if baseProp.Name == prop.Name {
@@ -308,7 +342,6 @@ func mergeArchProps(m *parser.Module, arch string) {
 				m.Map.Properties = append(m.Map.Properties, prop)
 			}
 		default:
-			// Override scalar value
 			found := false
 			for i, baseProp := range m.Map.Properties {
 				if baseProp.Name == prop.Name {
@@ -324,7 +357,6 @@ func mergeArchProps(m *parser.Module, arch string) {
 	}
 }
 
-// expandGlobsInModule expands glob patterns in module srcs
 func expandGlobsInModule(m *parser.Module, baseDir string) {
 	if m.Map == nil {
 		return

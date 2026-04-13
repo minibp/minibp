@@ -9,7 +9,7 @@ import (
 
 // Factory creates Module instances from AST nodes
 type Factory interface {
-	Create(ast *parser.Module) (Module, error)
+	Create(ast *parser.Module, eval *parser.Evaluator) (Module, error)
 }
 
 // Registry maps module type names to their factories
@@ -26,10 +26,10 @@ func Lookup(name string) Factory {
 }
 
 // Create builds a module from AST using the appropriate factory
-func Create(ast *parser.Module) (Module, error) {
+func Create(ast *parser.Module, eval *parser.Evaluator) (Module, error) {
 	factory := Lookup(ast.Type)
 	if factory == nil {
 		return nil, fmt.Errorf("unknown module type: %s", ast.Type)
 	}
-	return factory.Create(ast)
+	return factory.Create(ast, eval)
 }

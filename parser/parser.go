@@ -113,21 +113,14 @@ func (p *Parser) parseModule(typeName string, typePos scanner.Position) (*Module
 		return nil, err
 	}
 
-	mod := &Module{
-		Type:    typeName,
-		TypePos: typePos,
-		Map: &Map{
-			Properties: propertyList,
-			LBracePos:  lbracePos,
-			RBracePos:  rbracePos,
-		},
-	}
-
-	// Extract arch overrides from properties
+	// Extract arch, host, target overrides from properties
 	archProps := make(map[string]*Map)
+	var hostProps *Map
+	var targetProps *Map
 	var filteredProps []*Property
 	for _, prop := range propertyList {
-		if prop.Name == "arch" {
+		switch prop.Name {
+		case "arch":
 			if archMap, ok := prop.Value.(*Map); ok {
 				for _, ap := range archMap.Properties {
 					if archInner, ok := ap.Value.(*Map); ok {
@@ -135,13 +128,24 @@ func (p *Parser) parseModule(typeName string, typePos scanner.Position) (*Module
 					}
 				}
 			}
-		} else {
+		case "host":
+			if m, ok := prop.Value.(*Map); ok {
+				hostProps = m
+			}
+		case "target":
+			if m, ok := prop.Value.(*Map); ok {
+				targetProps = m
+			}
+		default:
 			filteredProps = append(filteredProps, prop)
 		}
 	}
-	if len(archProps) > 0 {
-		mod.Arch = archProps
-		mod.Map.Properties = filteredProps
+	mod := &Module{
+		Type:   typeName,
+		Map:    &Map{Properties: filteredProps, LBracePos: lbracePos, RBracePos: rbracePos},
+		Arch:   archProps,
+		Host:   hostProps,
+		Target: targetProps,
 	}
 
 	return mod, nil
@@ -232,8 +236,34 @@ func (p *Parser) parseAssignment(name string, namePos scanner.Position) (*Assign
 	}, nil
 }
 
-// parseExpression parses any expression
+// parseExpression parses any expression, including + operators
 func (p *Parser) parseExpression() (Expression, error) {
+	left, err := p.parsePrimary()
+	if err != nil {
+		return nil, err
+	}
+
+	for p.curToken.Type == PLUS {
+		opPos := p.curToken.Pos
+		p.nextToken()
+
+		right, err := p.parsePrimary()
+		if err != nil {
+			return nil, err
+		}
+
+		left = &Operator{
+			Args:        [2]Expression{left, right},
+			Operator:    '+',
+			OperatorPos: opPos,
+		}
+	}
+
+	return left, nil
+}
+
+// parsePrimary parses a single primary expression (no operators)
+func (p *Parser) parsePrimary() (Expression, error) {
 	switch p.curToken.Type {
 	case STRING:
 		return p.parseString()
@@ -246,7 +276,6 @@ func (p *Parser) parseExpression() (Expression, error) {
 	case LBRACE:
 		return p.parseMap()
 	case IDENT:
-		// Check if this is "select" keyword
 		if p.curToken.Literal == "select" {
 			return p.parseSelect()
 		}

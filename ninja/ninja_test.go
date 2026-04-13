@@ -10,6 +10,17 @@ import (
 	"minibp/parser"
 )
 
+type dagMockModule struct {
+	name string
+}
+
+func (m *dagMockModule) Name() string                   { return m.name }
+func (m *dagMockModule) Type() string                   { return "mock" }
+func (m *dagMockModule) Srcs() []string                 { return nil }
+func (m *dagMockModule) Deps() []string                 { return nil }
+func (m *dagMockModule) Props() map[string]interface{}  { return nil }
+func (m *dagMockModule) GetProp(key string) interface{} { return nil }
+
 // mockRule implements BuildRule for testing
 type mockRule struct {
 	name string
@@ -149,7 +160,6 @@ func TestGeneratorGenerate(t *testing.T) {
 func TestGeneratorWithCCLibrary(t *testing.T) {
 	g := dag.NewGraph()
 
-	// Create a cc_library module
 	m := &parser.Module{
 		Type: "cc_library",
 		Map: &parser.Map{
@@ -180,13 +190,237 @@ func TestGeneratorWithCCLibrary(t *testing.T) {
 
 	output := buf.String()
 
-	// Check for cc_compile rule
 	if !strings.Contains(output, "rule cc_compile") {
 		t.Errorf("Expected cc_compile rule in output, got: %s", output)
 	}
 
-	// Check for archive rule
 	if !strings.Contains(output, "rule cc_archive") {
 		t.Errorf("Expected cc_archive rule in output, got: %s", output)
+	}
+
+	if !strings.Contains(output, "depfile = $out.d") {
+		t.Errorf("Expected depfile in cc_compile rule, got: %s", output)
+	}
+
+	if !strings.Contains(output, "deps = gcc") {
+		t.Errorf("Expected 'deps = gcc' in cc_compile rule, got: %s", output)
+	}
+
+	if !strings.Contains(output, "-MMD -MF $out.d") {
+		t.Errorf("Expected -MMD -MF in compile command, got: %s", output)
+	}
+}
+
+func TestGeneratorPhonyTargets(t *testing.T) {
+	g := dag.NewGraph()
+
+	m := &parser.Module{
+		Type: "cc_binary",
+		Map: &parser.Map{
+			Properties: []*parser.Property{
+				{Name: "name", Value: &parser.String{Value: "app"}},
+				{Name: "srcs", Value: &parser.List{Values: []parser.Expression{
+					&parser.String{Value: "main.c"},
+				}}},
+			},
+		},
+	}
+
+	rules := map[string]BuildRule{
+		"cc_binary": &ccBinary{},
+	}
+
+	modules := map[string]*parser.Module{
+		"app": m,
+	}
+
+	g.AddModule(&dagMockModule{name: "app"})
+
+	gen := NewGenerator(g, rules, modules)
+
+	var buf bytes.Buffer
+	err := gen.Generate(&buf)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	output := buf.String()
+
+	if !strings.Contains(output, "build app: phony") {
+		t.Errorf("Expected phony target for app, got: %s", output)
+	}
+}
+
+func TestWriterSubninja(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	w.Subninja("path/to/other.ninja")
+	output := buf.String()
+	if !strings.Contains(output, "subninja path/to/other.ninja") {
+		t.Errorf("Expected subninja directive, got: %s", output)
+	}
+}
+
+func TestWriterInclude(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	w.Include("rules.ninja")
+	output := buf.String()
+	if !strings.Contains(output, "include rules.ninja") {
+		t.Errorf("Expected include directive, got: %s", output)
+	}
+}
+
+func TestWriterPhony(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	w.Phony("mylib.a", []string{"mylib.o", "helper.o"})
+	output := buf.String()
+	if !strings.Contains(output, "build mylib.a: phony mylib.o helper.o") {
+		t.Errorf("Expected phony target, got: %s", output)
+	}
+}
+
+func TestWriterDefault(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	w.Default([]string{"app", "libfoo.a"})
+	output := buf.String()
+	if !strings.Contains(output, "default app libfoo.a") {
+		t.Errorf("Expected default targets, got: %s", output)
+	}
+}
+
+func TestWriterBuildWithVars(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	w.BuildWithVars("out.o", "cc", []string{"in.c"}, []string{"generated.h"}, map[string]string{
+		"flags": "-Wall -O2",
+	})
+	output := buf.String()
+	if !strings.Contains(output, "build out.o: cc in.c || generated.h") {
+		t.Errorf("Expected build edge with order-only deps, got: %s", output)
+	}
+	if !strings.Contains(output, "flags = -Wall -O2") {
+		t.Errorf("Expected variable in build edge, got: %s", output)
+	}
+}
+
+func TestProtoLibraryRule(t *testing.T) {
+	r := &protoLibraryRule{}
+	m := &parser.Module{
+		Type: "proto_library",
+		Map: &parser.Map{
+			Properties: []*parser.Property{
+				{Name: "name", Value: &parser.String{Value: "myproto"}},
+				{Name: "srcs", Value: &parser.List{Values: []parser.Expression{
+					&parser.String{Value: "api.proto"},
+				}}},
+			},
+		},
+	}
+
+	outs := r.Outputs(m)
+	if len(outs) != 2 || outs[0] != "api.pb.h" || outs[1] != "api.pb.cc" {
+		t.Errorf("Expected [api.pb.h, api.pb.cc], got %v", outs)
+	}
+
+	edge := r.NinjaEdge(m)
+	if !strings.Contains(edge, "protoc") {
+		t.Errorf("Expected protoc in edge, got: %s", edge)
+	}
+	if !strings.Contains(edge, "api.proto") {
+		t.Errorf("Expected api.proto in edge, got: %s", edge)
+	}
+	if !strings.Contains(edge, "out_type = cc") {
+		t.Errorf("Expected out_type = cc in edge, got: %s", edge)
+	}
+}
+
+func TestProtoLibraryGoOutput(t *testing.T) {
+	r := &protoLibraryRule{}
+	m := &parser.Module{
+		Type: "proto_library",
+		Map: &parser.Map{
+			Properties: []*parser.Property{
+				{Name: "name", Value: &parser.String{Value: "myproto"}},
+				{Name: "srcs", Value: &parser.List{Values: []parser.Expression{
+					&parser.String{Value: "api.proto"},
+				}}},
+				{Name: "out", Value: &parser.String{Value: "go"}},
+			},
+		},
+	}
+
+	outs := r.Outputs(m)
+	if len(outs) != 1 || outs[0] != "api.pb.go" {
+		t.Errorf("Expected [api.pb.go], got %v", outs)
+	}
+}
+
+func TestProtoLibraryJavaOutput(t *testing.T) {
+	r := &protoLibraryRule{}
+	m := &parser.Module{
+		Type: "proto_library",
+		Map: &parser.Map{
+			Properties: []*parser.Property{
+				{Name: "name", Value: &parser.String{Value: "myproto"}},
+				{Name: "srcs", Value: &parser.List{Values: []parser.Expression{
+					&parser.String{Value: "api.proto"},
+				}}},
+				{Name: "out", Value: &parser.String{Value: "java"}},
+			},
+		},
+	}
+
+	outs := r.Outputs(m)
+	if len(outs) != 1 || outs[0] != "api.java" {
+		t.Errorf("Expected [api.java], got %v", outs)
+	}
+}
+
+func TestProtoLibraryWithPlugins(t *testing.T) {
+	r := &protoLibraryRule{}
+	m := &parser.Module{
+		Type: "proto_library",
+		Map: &parser.Map{
+			Properties: []*parser.Property{
+				{Name: "name", Value: &parser.String{Value: "myproto"}},
+				{Name: "srcs", Value: &parser.List{Values: []parser.Expression{
+					&parser.String{Value: "api.proto"},
+				}}},
+				{Name: "plugins", Value: &parser.List{Values: []parser.Expression{
+					&parser.String{Value: "protoc-gen-go"},
+				}}},
+				{Name: "proto_paths", Value: &parser.List{Values: []parser.Expression{
+					&parser.String{Value: "src/proto"},
+				}}},
+			},
+		},
+	}
+
+	edge := r.NinjaEdge(m)
+	if !strings.Contains(edge, "--plugin=protoc-gen-go") {
+		t.Errorf("Expected plugin flag in edge, got: %s", edge)
+	}
+	if !strings.Contains(edge, "--proto_path=src/proto") {
+		t.Errorf("Expected proto_path in edge, got: %s", edge)
+	}
+}
+
+func TestDepfileInCppRules(t *testing.T) {
+	r := &cppLibrary{}
+	rule := r.NinjaRule()
+	if !strings.Contains(rule, "depfile = $out.d") {
+		t.Errorf("Expected depfile in cpp_compile rule, got: %s", rule)
+	}
+	if !strings.Contains(rule, "deps = gcc") {
+		t.Errorf("Expected deps = gcc in cpp_compile rule, got: %s", rule)
+	}
+
+	r2 := &cppBinary{}
+	rule2 := r2.NinjaRule()
+	if !strings.Contains(rule2, "depfile = $out.d") {
+		t.Errorf("Expected depfile in cpp_binary compile rule, got: %s", rule2)
 	}
 }

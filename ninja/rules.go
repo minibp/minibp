@@ -19,7 +19,7 @@ type BuildRule interface {
 	Desc(m *parser.Module, srcFile string) string
 }
 
-func getStringProp(m *parser.Module, name string) string {
+func GetStringProp(m *parser.Module, name string) string {
 	if m.Map == nil {
 		return ""
 	}
@@ -27,6 +27,26 @@ func getStringProp(m *parser.Module, name string) string {
 		if prop.Name == name {
 			if s, ok := prop.Value.(*parser.String); ok {
 				return s.Value
+			}
+		}
+	}
+	return ""
+}
+
+func GetStringPropEval(m *parser.Module, name string, eval *parser.Evaluator) string {
+	if m.Map == nil {
+		return ""
+	}
+	for _, prop := range m.Map.Properties {
+		if prop.Name == name {
+			if s, ok := prop.Value.(*parser.String); ok {
+				return s.Value
+			}
+			if eval != nil {
+				val := eval.Eval(prop.Value)
+				if s, ok := val.(string); ok {
+					return s
+				}
 			}
 		}
 	}
@@ -47,7 +67,7 @@ func getBoolProp(m *parser.Module, name string) bool {
 	return false
 }
 
-func getListProp(m *parser.Module, name string) []string {
+func GetListProp(m *parser.Module, name string) []string {
 	if m.Map == nil {
 		return nil
 	}
@@ -67,15 +87,29 @@ func getListProp(m *parser.Module, name string) []string {
 	return nil
 }
 
-func getCflags(m *parser.Module) string              { return strings.Join(getListProp(m, "cflags"), " ") }
-func getCppflags(m *parser.Module) string            { return strings.Join(getListProp(m, "cppflags"), " ") }
-func getLdflags(m *parser.Module) string             { return strings.Join(getListProp(m, "ldflags"), " ") }
-func getGoflags(m *parser.Module) string             { return strings.Join(getListProp(m, "goflags"), " ") }
-func getJavaflags(m *parser.Module) string           { return strings.Join(getListProp(m, "javaflags"), " ") }
-func getExportIncludeDirs(m *parser.Module) []string { return getListProp(m, "export_include_dirs") }
-func getExportedHeaders(m *parser.Module) []string   { return getListProp(m, "exported_headers") }
-func getName(m *parser.Module) string                { return getStringProp(m, "name") }
-func getSrcs(m *parser.Module) []string              { return getListProp(m, "srcs") }
+func GetListPropEval(m *parser.Module, name string, eval *parser.Evaluator) []string {
+	if m.Map == nil {
+		return nil
+	}
+	for _, prop := range m.Map.Properties {
+		if prop.Name == name {
+			if l, ok := prop.Value.(*parser.List); ok {
+				return parser.EvalToStringList(l, eval)
+			}
+		}
+	}
+	return nil
+}
+
+func getCflags(m *parser.Module) string              { return strings.Join(GetListProp(m, "cflags"), " ") }
+func getCppflags(m *parser.Module) string            { return strings.Join(GetListProp(m, "cppflags"), " ") }
+func getLdflags(m *parser.Module) string             { return strings.Join(GetListProp(m, "ldflags"), " ") }
+func getGoflags(m *parser.Module) string             { return strings.Join(GetListProp(m, "goflags"), " ") }
+func getJavaflags(m *parser.Module) string           { return strings.Join(GetListProp(m, "javaflags"), " ") }
+func getExportIncludeDirs(m *parser.Module) []string { return GetListProp(m, "export_include_dirs") }
+func getExportedHeaders(m *parser.Module) []string   { return GetListProp(m, "exported_headers") }
+func getName(m *parser.Module) string                { return GetStringProp(m, "name") }
+func getSrcs(m *parser.Module) []string              { return GetListProp(m, "srcs") }
 func formatSrcs(srcs []string) string                { return strings.Join(srcs, " ") }
 
 func getCC() string {
@@ -111,12 +145,14 @@ type ccLibrary struct{}
 func (r *ccLibrary) Name() string { return "cc_library" }
 func (r *ccLibrary) NinjaRule() string {
 	return fmt.Sprintf(`rule cc_compile
- command = %s -c $in -o $out $flags
+  command = %s -c $in -o $out $flags -MMD -MF $out.d
+  depfile = $out.d
+  deps = gcc
 rule cc_archive
- command = %s rcs $out $in
+  command = %s rcs $out $in
 rule cc_shared
- command = %s -shared -o $out $in $flags
-`, getCC(), getAR(), getCC())
+  command = %s -shared -o $out $in $flags
+ `, getCC(), getAR(), getCC())
 }
 
 func (r *ccLibrary) Outputs(m *parser.Module) []string {
@@ -140,7 +176,7 @@ func (r *ccLibrary) NinjaEdge(m *parser.Module) string {
 	shared := getBoolProp(m, "shared")
 	cflags := getCflags(m)
 	ldflags := getLdflags(m)
-	sharedLibs := getListProp(m, "shared_libs")
+	sharedLibs := GetListProp(m, "shared_libs")
 	if shared && len(sharedLibs) > 0 {
 		for _, dep := range sharedLibs {
 			depName := strings.TrimPrefix(dep, ":")
@@ -187,10 +223,12 @@ type ccLibraryStatic struct{}
 func (r *ccLibraryStatic) Name() string { return "cc_library_static" }
 func (r *ccLibraryStatic) NinjaRule() string {
 	return fmt.Sprintf(`rule cc_compile
- command = %s -c $in -o $out $flags
+  command = %s -c $in -o $out $flags -MMD -MF $out.d
+  depfile = $out.d
+  deps = gcc
 rule cc_archive
- command = %s rcs $out $in
-`, getCC(), getAR())
+  command = %s rcs $out $in
+ `, getCC(), getAR())
 }
 func (r *ccLibraryStatic) Outputs(m *parser.Module) []string {
 	name := getName(m)
@@ -235,10 +273,12 @@ type ccLibraryShared struct{}
 func (r *ccLibraryShared) Name() string { return "cc_library_shared" }
 func (r *ccLibraryShared) NinjaRule() string {
 	return fmt.Sprintf(`rule cc_compile
- command = %s -c $in -o $out $flags
+  command = %s -c $in -o $out $flags -MMD -MF $out.d
+  depfile = $out.d
+  deps = gcc
 rule cc_shared
- command = %s -shared -o $out $in $flags
-`, getCC(), getCC())
+  command = %s -shared -o $out $in $flags
+ `, getCC(), getCC())
 }
 func (r *ccLibraryShared) Outputs(m *parser.Module) []string {
 	name := getName(m)
@@ -284,8 +324,10 @@ type ccObject struct{}
 func (r *ccObject) Name() string { return "cc_object" }
 func (r *ccObject) NinjaRule() string {
 	return fmt.Sprintf(`rule cc_compile
- command = %s -c $in -o $out $flags
-`, getCC())
+  command = %s -c $in -o $out $flags -MMD -MF $out.d
+  depfile = $out.d
+  deps = gcc
+ `, getCC())
 }
 func (r *ccObject) Outputs(m *parser.Module) []string {
 	name := getName(m)
@@ -314,10 +356,12 @@ type ccBinary struct{}
 func (r *ccBinary) Name() string { return "cc_binary" }
 func (r *ccBinary) NinjaRule() string {
 	return fmt.Sprintf(`rule cc_compile
- command = %s -c $in -o $out $flags
+  command = %s -c $in -o $out $flags -MMD -MF $out.d
+  depfile = $out.d
+  deps = gcc
 rule cc_link
- command = %s -o $out $in $flags
-`, getCC(), getCC())
+  command = %s -o $out $in $flags
+ `, getCC(), getCC())
 }
 func (r *ccBinary) Outputs(m *parser.Module) []string {
 	name := getName(m)
@@ -337,8 +381,8 @@ func getSharedLibOutputName(name string) string {
 func (r *ccBinary) NinjaEdge(m *parser.Module) string {
 	name := getName(m)
 	srcs := getSrcs(m)
-	deps := getListProp(m, "deps")
-	sharedLibs := getListProp(m, "shared_libs")
+	deps := GetListProp(m, "deps")
+	sharedLibs := GetListProp(m, "shared_libs")
 	if name == "" || len(srcs) == 0 {
 		return ""
 	}
@@ -389,12 +433,14 @@ type cppLibrary struct{}
 func (r *cppLibrary) Name() string { return "cpp_library" }
 func (r *cppLibrary) NinjaRule() string {
 	return fmt.Sprintf(`rule cpp_compile
- command = %s -c $in -o $out $flags
+  command = %s -c $in -o $out $flags -MMD -MF $out.d
+  depfile = $out.d
+  deps = gcc
 rule cpp_archive
- command = %s rcs $out $in
+  command = %s rcs $out $in
 rule cpp_shared
- command = %s -shared -o $out $in $flags
-`, getCXX(), getAR(), getCXX())
+  command = %s -shared -o $out $in $flags
+ `, getCXX(), getAR(), getCXX())
 }
 func (r *cppLibrary) Outputs(m *parser.Module) []string {
 	name := getName(m)
@@ -460,10 +506,12 @@ type cppBinary struct{}
 func (r *cppBinary) Name() string { return "cpp_binary" }
 func (r *cppBinary) NinjaRule() string {
 	return fmt.Sprintf(`rule cpp_compile
- command = %s -c $in -o $out $flags
+  command = %s -c $in -o $out $flags -MMD -MF $out.d
+  depfile = $out.d
+  deps = gcc
 rule cpp_link
- command = %s -o $out $in $flags
-`, getCXX(), getCXX())
+  command = %s -o $out $in $flags
+ `, getCXX(), getCXX())
 }
 func (r *cppBinary) Outputs(m *parser.Module) []string {
 	name := getName(m)
@@ -475,8 +523,8 @@ func (r *cppBinary) Outputs(m *parser.Module) []string {
 func (r *cppBinary) NinjaEdge(m *parser.Module) string {
 	name := getName(m)
 	srcs := getSrcs(m)
-	deps := getListProp(m, "deps")
-	sharedLibs := getListProp(m, "shared_libs")
+	deps := GetListProp(m, "deps")
+	sharedLibs := GetListProp(m, "shared_libs")
 	if name == "" || len(srcs) == 0 {
 		return ""
 	}
@@ -575,7 +623,7 @@ func (r *goBinary) Outputs(m *parser.Module) []string {
 func (r *goBinary) NinjaEdge(m *parser.Module) string {
 	name := getName(m)
 	srcs := getSrcs(m)
-	deps := getListProp(m, "deps")
+	deps := GetListProp(m, "deps")
 	if name == "" || len(srcs) == 0 {
 		return ""
 	}
@@ -698,7 +746,7 @@ func (r *javaBinary) Outputs(m *parser.Module) []string {
 func (r *javaBinary) NinjaEdge(m *parser.Module) string {
 	name := getName(m)
 	srcs := getSrcs(m)
-	mainClass := getStringProp(m, "main_class")
+	mainClass := GetStringProp(m, "main_class")
 	if name == "" || len(srcs) == 0 || mainClass == "" {
 		return ""
 	}
@@ -822,7 +870,7 @@ func (r *javaBinaryHost) Outputs(m *parser.Module) []string {
 func (r *javaBinaryHost) NinjaEdge(m *parser.Module) string {
 	name := getName(m)
 	srcs := getSrcs(m)
-	mainClass := getStringProp(m, "main_class")
+	mainClass := GetStringProp(m, "main_class")
 	if name == "" || len(srcs) == 0 || mainClass == "" {
 		return ""
 	}
@@ -933,17 +981,17 @@ func (r *customRule) NinjaRule() string {
 `
 }
 func (r *customRule) Outputs(m *parser.Module) []string {
-	return getListProp(m, "outs")
+	return GetListProp(m, "outs")
 }
 func (r *customRule) NinjaEdge(m *parser.Module) string {
 	return customRuleEdge(m, "")
 }
 
 func customRuleEdge(m *parser.Module, workDir string) string {
-	srcs := getListProp(m, "srcs")
-	outs := getListProp(m, "outs")
-	cmd := getStringProp(m, "cmd")
-	excludeDirs := getListProp(m, "exclude_dirs")
+	srcs := GetListProp(m, "srcs")
+	outs := GetListProp(m, "outs")
+	cmd := GetStringProp(m, "cmd")
+	excludeDirs := GetListProp(m, "exclude_dirs")
 	if len(outs) == 0 || cmd == "" {
 		return ""
 	}
@@ -1025,6 +1073,178 @@ func (r *ccLibraryHeaders) NinjaEdge(m *parser.Module) string {
 }
 func (r *ccLibraryHeaders) Desc(m *parser.Module, srcFile string) string { return "" }
 
+// ============================================================================
+// proto_library - Protocol Buffer library
+// ============================================================================
+type protoLibraryRule struct{}
+
+func (r *protoLibraryRule) Name() string { return "proto_library" }
+func (r *protoLibraryRule) NinjaRule() string {
+	return `rule protoc
+  command = protoc --proto_path=. $proto_paths $include_flags $plugin_flags --$out_type_out=$proto_out $in
+  description = PROTOC $in
+`
+}
+func (r *protoLibraryRule) Outputs(m *parser.Module) []string {
+	name := getName(m)
+	if name == "" {
+		return nil
+	}
+	outType := GetStringProp(m, "out")
+	if outType == "" {
+		outType = "cc"
+	}
+	srcs := getSrcs(m)
+	var outs []string
+	for _, src := range srcs {
+		base := strings.TrimSuffix(filepath.Base(src), ".proto")
+		switch outType {
+		case "cc":
+			outs = append(outs, base+".pb.h", base+".pb.cc")
+		case "go":
+			outs = append(outs, base+".pb.go")
+		case "java":
+			outs = append(outs, base+".java")
+		case "python":
+			outs = append(outs, base+"_pb2.py")
+		default:
+			outs = append(outs, base+".pb."+outType)
+		}
+	}
+	return outs
+}
+func (r *protoLibraryRule) NinjaEdge(m *parser.Module) string {
+	name := getName(m)
+	srcs := getSrcs(m)
+	if name == "" || len(srcs) == 0 {
+		return ""
+	}
+	outType := GetStringProp(m, "out")
+	if outType == "" {
+		outType = "cc"
+	}
+	protoPaths := GetListProp(m, "proto_paths")
+	plugins := GetListProp(m, "plugins")
+	includeDirs := GetListProp(m, "include_dirs")
+
+	protoPathFlags := ""
+	for _, p := range protoPaths {
+		protoPathFlags += " --proto_path=" + p
+	}
+
+	includeFlags := ""
+	for _, d := range includeDirs {
+		includeFlags += " --proto_path=" + d
+	}
+
+	pluginFlags := ""
+	for _, pl := range plugins {
+		pluginFlags += " --plugin=" + pl
+	}
+
+	protoOut := name + "_proto_out"
+
+	outs := r.Outputs(m)
+	if len(outs) == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf("build %s: protoc %s\n proto_paths = %s\n include_flags = %s\n plugin_flags = %s\n out_type = %s\n proto_out = %s\n",
+		strings.Join(outs, " "),
+		strings.Join(srcs, " "),
+		protoPathFlags,
+		includeFlags,
+		pluginFlags,
+		outType,
+		protoOut,
+	)
+}
+func (r *protoLibraryRule) Desc(m *parser.Module, srcFile string) string { return "protoc" }
+
+// ============================================================================
+// proto_gen - Protocol Buffer code generation
+// ============================================================================
+type protoGenRule struct{}
+
+func (r *protoGenRule) Name() string { return "proto_gen" }
+func (r *protoGenRule) NinjaRule() string {
+	return `rule protoc_gen
+  command = protoc --proto_path=. $proto_paths $include_flags $plugin_flags --$out_type_out=$proto_out $in
+  description = PROTOC $in
+`
+}
+func (r *protoGenRule) Outputs(m *parser.Module) []string {
+	name := getName(m)
+	if name == "" {
+		return nil
+	}
+	outType := GetStringProp(m, "out")
+	if outType == "" {
+		outType = "cc"
+	}
+	srcs := getSrcs(m)
+	var outs []string
+	for _, src := range srcs {
+		base := strings.TrimSuffix(filepath.Base(src), ".proto")
+		switch outType {
+		case "cc":
+			outs = append(outs, name+"_"+base+".pb.h", name+"_"+base+".pb.cc")
+		case "go":
+			outs = append(outs, name+"_"+base+".pb.go")
+		default:
+			outs = append(outs, name+"_"+base+".pb."+outType)
+		}
+	}
+	return outs
+}
+func (r *protoGenRule) NinjaEdge(m *parser.Module) string {
+	name := getName(m)
+	srcs := getSrcs(m)
+	if name == "" || len(srcs) == 0 {
+		return ""
+	}
+	outType := GetStringProp(m, "out")
+	if outType == "" {
+		outType = "cc"
+	}
+	protoPaths := GetListProp(m, "proto_paths")
+	plugins := GetListProp(m, "plugins")
+	includeDirs := GetListProp(m, "include_dirs")
+
+	protoPathFlags := ""
+	for _, p := range protoPaths {
+		protoPathFlags += " --proto_path=" + p
+	}
+
+	includeFlags := ""
+	for _, d := range includeDirs {
+		includeFlags += " --proto_path=" + d
+	}
+
+	pluginFlags := ""
+	for _, pl := range plugins {
+		pluginFlags += " --plugin=" + pl
+	}
+
+	protoOut := name + "_proto_out"
+
+	outs := r.Outputs(m)
+	if len(outs) == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf("build %s: protoc_gen %s\n proto_paths = %s\n include_flags = %s\n plugin_flags = %s\n out_type = %s\n proto_out = %s\n",
+		strings.Join(outs, " "),
+		strings.Join(srcs, " "),
+		protoPathFlags,
+		includeFlags,
+		pluginFlags,
+		outType,
+		protoOut,
+	)
+}
+func (r *protoGenRule) Desc(m *parser.Module, srcFile string) string { return "protoc" }
+
 func GetAllRules() []BuildRule {
 	return []BuildRule{
 		&ccLibrary{}, &ccLibraryStatic{}, &ccLibraryShared{}, &ccObject{}, &ccBinary{},
@@ -1032,6 +1252,7 @@ func GetAllRules() []BuildRule {
 		&goLibrary{}, &goBinary{}, &goTest{},
 		&javaLibrary{}, &javaLibraryStatic{}, &javaLibraryHost{}, &javaBinary{}, &javaBinaryHost{}, &javaTest{}, &javaImport{},
 		&filegroup{}, &customRule{},
+		&protoLibraryRule{}, &protoGenRule{},
 	}
 }
 

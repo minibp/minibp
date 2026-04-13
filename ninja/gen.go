@@ -156,7 +156,7 @@ func (g *Generator) collectIncludePaths(moduleName string, visited map[string]bo
 	}
 
 	// Collect from header_libs (cc_library_headers dependencies)
-	headerLibs := getListProp(m, "header_libs")
+	headerLibs := GetListProp(m, "header_libs")
 	for _, dep := range headerLibs {
 		depName := strings.TrimPrefix(dep, ":")
 		depIncludes := g.collectIncludePaths(depName, visited)
@@ -169,7 +169,7 @@ func (g *Generator) collectIncludePaths(moduleName string, visited map[string]bo
 	}
 
 	// Recursively collect from deps (option B: transitive)
-	deps := getListProp(m, "deps")
+	deps := GetListProp(m, "deps")
 	for _, dep := range deps {
 		depName := strings.TrimPrefix(dep, ":")
 		depIncludes := g.collectIncludePaths(depName, visited)
@@ -336,6 +336,13 @@ func (g *Generator) Generate(w io.Writer) error {
 	if len(allOutputs) > 0 {
 		fmt.Fprintf(w, "\nrule clean\n command = rm -f %s\n", strings.Join(allOutputs, " "))
 		fmt.Fprintf(w, "\nbuild clean: clean\n")
+	}
+
+	if len(allOutputs) > 0 {
+		fmt.Fprintln(w)
+		for _, out := range allOutputs {
+			fmt.Fprintf(w, "build %s: phony\n", out)
+		}
 	}
 
 	return nil
