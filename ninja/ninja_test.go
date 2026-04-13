@@ -215,10 +215,10 @@ func TestGeneratorPhonyTargets(t *testing.T) {
 	g := dag.NewGraph()
 
 	m := &parser.Module{
-		Type: "cc_binary",
+		Type: "cc_library",
 		Map: &parser.Map{
 			Properties: []*parser.Property{
-				{Name: "name", Value: &parser.String{Value: "app"}},
+				{Name: "name", Value: &parser.String{Value: "mylib"}},
 				{Name: "srcs", Value: &parser.List{Values: []parser.Expression{
 					&parser.String{Value: "main.c"},
 				}}},
@@ -227,14 +227,14 @@ func TestGeneratorPhonyTargets(t *testing.T) {
 	}
 
 	rules := map[string]BuildRule{
-		"cc_binary": &ccBinary{},
+		"cc_library": &ccLibrary{},
 	}
 
 	modules := map[string]*parser.Module{
-		"app": m,
+		"mylib": m,
 	}
 
-	g.AddModule(&dagMockModule{name: "app"})
+	g.AddModule(&dagMockModule{name: "mylib"})
 
 	gen := NewGenerator(g, rules, modules)
 
@@ -246,8 +246,8 @@ func TestGeneratorPhonyTargets(t *testing.T) {
 
 	output := buf.String()
 
-	if !strings.Contains(output, "build app: phony") {
-		t.Errorf("Expected phony target for app, got: %s", output)
+	if !strings.Contains(output, "build mylib: phony libmylib.a") {
+		t.Errorf("Expected phony target for mylib, got: %s", output)
 	}
 }
 

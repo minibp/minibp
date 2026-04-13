@@ -148,11 +148,41 @@ func (r *ccLibrary) NinjaRule() string {
   command = %s -c $in -o $out $flags -MMD -MF $out.d
   depfile = $out.d
   deps = gcc
+
 rule cc_archive
   command = %s rcs $out $in
+
 rule cc_shared
   command = %s -shared -o $out $in $flags
  `, getCC(), getAR(), getCC())
+}
+
+type ccLibraryStatic struct{}
+
+func (r *ccLibraryStatic) Name() string { return "cc_library_static" }
+func (r *ccLibraryStatic) NinjaRule() string {
+	return fmt.Sprintf(`rule cc_compile
+  command = %s -c $in -o $out $flags -MMD -MF $out.d
+  depfile = $out.d
+  deps = gcc
+
+rule cc_archive
+  command = %s rcs $out $in
+ `, getCC(), getAR())
+}
+
+type ccLibraryShared struct{}
+
+func (r *ccLibraryShared) Name() string { return "cc_library_shared" }
+func (r *ccLibraryShared) NinjaRule() string {
+	return fmt.Sprintf(`rule cc_compile
+  command = %s -c $in -o $out $flags -MMD -MF $out.d
+  depfile = $out.d
+  deps = gcc
+
+rule cc_shared
+  command = %s -shared -o $out $in $flags
+ `, getCC(), getCC())
 }
 
 func (r *ccLibrary) Outputs(m *parser.Module) []string {
@@ -218,18 +248,6 @@ func (r *ccLibrary) Desc(m *parser.Module, srcFile string) string {
 // ============================================================================
 // cc_library_static
 // ============================================================================
-type ccLibraryStatic struct{}
-
-func (r *ccLibraryStatic) Name() string { return "cc_library_static" }
-func (r *ccLibraryStatic) NinjaRule() string {
-	return fmt.Sprintf(`rule cc_compile
-  command = %s -c $in -o $out $flags -MMD -MF $out.d
-  depfile = $out.d
-  deps = gcc
-rule cc_archive
-  command = %s rcs $out $in
- `, getCC(), getAR())
-}
 func (r *ccLibraryStatic) Outputs(m *parser.Module) []string {
 	name := getName(m)
 	if name == "" {
@@ -268,18 +286,6 @@ func (r *ccLibraryStatic) Desc(m *parser.Module, srcFile string) string {
 // ============================================================================
 // cc_library_shared
 // ============================================================================
-type ccLibraryShared struct{}
-
-func (r *ccLibraryShared) Name() string { return "cc_library_shared" }
-func (r *ccLibraryShared) NinjaRule() string {
-	return fmt.Sprintf(`rule cc_compile
-  command = %s -c $in -o $out $flags -MMD -MF $out.d
-  depfile = $out.d
-  deps = gcc
-rule cc_shared
-  command = %s -shared -o $out $in $flags
- `, getCC(), getCC())
-}
 func (r *ccLibraryShared) Outputs(m *parser.Module) []string {
 	name := getName(m)
 	if name == "" {
@@ -359,6 +365,7 @@ func (r *ccBinary) NinjaRule() string {
   command = %s -c $in -o $out $flags -MMD -MF $out.d
   depfile = $out.d
   deps = gcc
+
 rule cc_link
   command = %s -o $out $in $flags
  `, getCC(), getCC())
@@ -436,8 +443,10 @@ func (r *cppLibrary) NinjaRule() string {
   command = %s -c $in -o $out $flags -MMD -MF $out.d
   depfile = $out.d
   deps = gcc
+
 rule cpp_archive
   command = %s rcs $out $in
+
 rule cpp_shared
   command = %s -shared -o $out $in $flags
  `, getCXX(), getAR(), getCXX())
@@ -509,6 +518,7 @@ func (r *cppBinary) NinjaRule() string {
   command = %s -c $in -o $out $flags -MMD -MF $out.d
   depfile = $out.d
   deps = gcc
+
 rule cpp_link
   command = %s -o $out $in $flags
  `, getCXX(), getCXX())
@@ -690,9 +700,10 @@ type javaLibrary struct{}
 func (r *javaLibrary) Name() string { return "java_library" }
 func (r *javaLibrary) NinjaRule() string {
 	return `rule javac_lib
- command = javac -d $outdir $in $flags
+  command = javac -d $outdir $in $flags
+
 rule jar_create
- command = jar cf $out -C $outdir .
+  command = jar cf $out -C $outdir .
 `
 }
 func (r *javaLibrary) Outputs(m *parser.Module) []string {
@@ -731,9 +742,10 @@ type javaBinary struct{}
 func (r *javaBinary) Name() string { return "java_binary" }
 func (r *javaBinary) NinjaRule() string {
 	return `rule javac_bin
- command = javac -d $outdir $in $flags
+  command = javac -d $outdir $in $flags
+
 rule jar_create_executable
- command = jar cfe $out $main_class -C $outdir .
+  command = jar cfe $out $main_class -C $outdir .
 `
 }
 func (r *javaBinary) Outputs(m *parser.Module) []string {
@@ -773,9 +785,10 @@ type javaLibraryStatic struct{}
 func (r *javaLibraryStatic) Name() string { return "java_library_static" }
 func (r *javaLibraryStatic) NinjaRule() string {
 	return `rule javac_lib
- command = javac -d $outdir $in $flags
+  command = javac -d $outdir $in $flags
+
 rule jar_create
- command = jar cf $out -C $outdir .
+  command = jar cf $out -C $outdir .
 `
 }
 func (r *javaLibraryStatic) Outputs(m *parser.Module) []string {
@@ -814,9 +827,10 @@ type javaLibraryHost struct{}
 func (r *javaLibraryHost) Name() string { return "java_library_host" }
 func (r *javaLibraryHost) NinjaRule() string {
 	return `rule javac_lib
- command = javac -d $outdir $in $flags
+  command = javac -d $outdir $in $flags
+
 rule jar_create
- command = jar cf $out -C $outdir .
+  command = jar cf $out -C $outdir .
 `
 }
 func (r *javaLibraryHost) Outputs(m *parser.Module) []string {
@@ -855,9 +869,10 @@ type javaBinaryHost struct{}
 func (r *javaBinaryHost) Name() string { return "java_binary_host" }
 func (r *javaBinaryHost) NinjaRule() string {
 	return `rule javac_bin
- command = javac -d $outdir $in $flags
+  command = javac -d $outdir $in $flags
+
 rule jar_create_executable
- command = jar cfe $out $main_class -C $outdir .
+  command = jar cfe $out $main_class -C $outdir .
 `
 }
 func (r *javaBinaryHost) Outputs(m *parser.Module) []string {
@@ -897,9 +912,10 @@ type javaTest struct{}
 func (r *javaTest) Name() string { return "java_test" }
 func (r *javaTest) NinjaRule() string {
 	return `rule javac_test
- command = javac -d $outdir $in $flags
+  command = javac -d $outdir $in $flags
+
 rule jar_test
- command = jar cf $out -C $outdir .
+  command = jar cf $out -C $outdir .
 `
 }
 func (r *javaTest) Outputs(m *parser.Module) []string {

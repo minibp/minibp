@@ -244,7 +244,7 @@ func (g *Generator) Generate(w io.Writer) error {
 				ninjaRuleName := strings.TrimSpace(lines[0])
 				if ninjaRuleName != "" && !writtenNinjaRules[ninjaRuleName] {
 					writtenNinjaRules[ninjaRuleName] = true
-					fmt.Fprintf(w, "rule %s", part)
+					fmt.Fprintf(w, "rule %s", strings.TrimRight(part, " \t"))
 				}
 			}
 		}
@@ -338,10 +338,38 @@ func (g *Generator) Generate(w io.Writer) error {
 		fmt.Fprintf(w, "\nbuild clean: clean\n")
 	}
 
-	if len(allOutputs) > 0 {
-		fmt.Fprintln(w)
-		for _, out := range allOutputs {
-			fmt.Fprintf(w, "build %s: phony\n", out)
+	for _, level := range levels {
+		for _, moduleName := range level {
+			m, ok := g.modules[moduleName]
+			if !ok || m == nil {
+				continue
+			}
+			rule, ok := g.rules[m.Type]
+			if !ok {
+				continue
+			}
+			edgeDef := rule.NinjaEdge(m)
+			if edgeDef == "" && m.Type != "cc_library_headers" {
+				continue
+			}
+			if edgeDef == "" {
+				continue
+			}
+			outputs := rule.Outputs(m)
+			if len(outputs) == 0 {
+				continue
+			}
+			skip := false
+			for _, out := range outputs {
+				if out == moduleName {
+					skip = true
+					break
+				}
+			}
+			if skip {
+				continue
+			}
+			fmt.Fprintf(w, "build %s: phony %s\n", moduleName, strings.Join(outputs, " "))
 		}
 	}
 
