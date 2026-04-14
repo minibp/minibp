@@ -65,7 +65,7 @@ go_library {
 // Go binary executable
 go_binary {
     name: "server",
-    srcs: ["src/int.go"],
+    srcs: ["cmd/server/main.go"],
     deps: [
         ":libapi",
     ],
