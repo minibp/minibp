@@ -586,6 +586,64 @@ func TestParseArchBlock(t *testing.T) {
 	}
 }
 
+func TestParseInvalidArchOverrideValue(t *testing.T) {
+	input := `cc_library {
+    name: "libfoo",
+    arch: true,
+}`
+
+	p := NewParser(strings.NewReader(input), "test.bp")
+	_, errs := p.Parse()
+
+	if len(errs) == 0 {
+		t.Fatal("Expected parse error for invalid arch override value")
+	}
+}
+
+func TestParseInvalidArchNestedOverrideValue(t *testing.T) {
+	input := `cc_library {
+    name: "libfoo",
+    arch: {
+        arm: true,
+    },
+}`
+
+	p := NewParser(strings.NewReader(input), "test.bp")
+	_, errs := p.Parse()
+
+	if len(errs) == 0 {
+		t.Fatal("Expected parse error for invalid nested arch override value")
+	}
+}
+
+func TestParseInvalidHostOverrideValue(t *testing.T) {
+	input := `cc_library {
+    name: "libfoo",
+    host: false,
+}`
+
+	p := NewParser(strings.NewReader(input), "test.bp")
+	_, errs := p.Parse()
+
+	if len(errs) == 0 {
+		t.Fatal("Expected parse error for invalid host override value")
+	}
+}
+
+func TestParseInvalidTargetOverrideValue(t *testing.T) {
+	input := `cc_library {
+    name: "libfoo",
+    target: "device",
+}`
+
+	p := NewParser(strings.NewReader(input), "test.bp")
+	_, errs := p.Parse()
+
+	if len(errs) == 0 {
+		t.Fatal("Expected parse error for invalid target override value")
+	}
+}
+
 func TestParseExportedHeaders(t *testing.T) {
 	input := `cc_library {
     name: "libfoo",

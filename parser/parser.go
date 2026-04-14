@@ -113,7 +113,7 @@ func (p *Parser) parseModule(typeName string, typePos scanner.Position) (*Module
 		return nil, err
 	}
 
-	// Extract arch, host, target overrides from properties
+	// Extract arch, host, target overrides from properties.
 	archProps := make(map[string]*Map)
 	var hostProps *Map
 	var targetProps *Map
@@ -121,21 +121,29 @@ func (p *Parser) parseModule(typeName string, typePos scanner.Position) (*Module
 	for _, prop := range propertyList {
 		switch prop.Name {
 		case "arch":
-			if archMap, ok := prop.Value.(*Map); ok {
-				for _, ap := range archMap.Properties {
-					if archInner, ok := ap.Value.(*Map); ok {
-						archProps[ap.Name] = archInner
-					}
+			archMap, ok := prop.Value.(*Map)
+			if !ok {
+				return nil, fmt.Errorf("%s: expected map value for 'arch' override", prop.ColonPos)
+			}
+			for _, ap := range archMap.Properties {
+				archInner, ok := ap.Value.(*Map)
+				if !ok {
+					return nil, fmt.Errorf("%s: expected map value for arch override '%s'", ap.ColonPos, ap.Name)
 				}
+				archProps[ap.Name] = archInner
 			}
 		case "host":
-			if m, ok := prop.Value.(*Map); ok {
-				hostProps = m
+			m, ok := prop.Value.(*Map)
+			if !ok {
+				return nil, fmt.Errorf("%s: expected map value for 'host' override", prop.ColonPos)
 			}
+			hostProps = m
 		case "target":
-			if m, ok := prop.Value.(*Map); ok {
-				targetProps = m
+			m, ok := prop.Value.(*Map)
+			if !ok {
+				return nil, fmt.Errorf("%s: expected map value for 'target' override", prop.ColonPos)
 			}
+			targetProps = m
 		default:
 			filteredProps = append(filteredProps, prop)
 		}
