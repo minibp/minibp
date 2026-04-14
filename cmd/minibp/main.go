@@ -400,19 +400,15 @@ func expandGlob(pattern, baseDir string) []string {
 	var result []string
 
 	if strings.Contains(pattern, "**") {
-		dir := baseDir
-		suffix := ""
-		if idx := strings.Index(pattern, "/**"); idx >= 0 {
-			dir = filepath.Join(baseDir, pattern[:idx])
-			suffix = pattern[idx+3:]
-		}
+		walkDir := recursiveGlobRoot(pattern, baseDir)
 
-		filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		filepath.Walk(walkDir, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return nil
 			}
 			relPath, _ := filepath.Rel(baseDir, path)
-			if suffix == "" || strings.HasSuffix(path, suffix) {
+			relPath = filepath.ToSlash(relPath)
+			if matchRecursivePattern(filepath.ToSlash(pattern), relPath) {
 				result = append(result, relPath)
 			}
 			return nil
@@ -427,4 +423,60 @@ func expandGlob(pattern, baseDir string) []string {
 	}
 
 	return result
+}
+
+func recursiveGlobRoot(pattern, baseDir string) string {
+	parts := strings.Split(filepath.ToSlash(pattern), "/")
+	prefix := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part == "**" || strings.ContainsAny(part, "*?[") {
+			break
+		}
+		prefix = append(prefix, part)
+	}
+	if len(prefix) == 0 {
+		return baseDir
+	}
+	root := filepath.Join(append([]string{baseDir}, prefix...)...)
+	return root
+}
+
+func matchRecursivePattern(pattern, path string) bool {
+	patternParts := splitGlobParts(pattern)
+	pathParts := splitGlobParts(path)
+	return matchRecursiveParts(patternParts, pathParts)
+}
+
+func splitGlobParts(path string) []string {
+	if path == "" {
+		return nil
+	}
+	return strings.Split(path, "/")
+}
+
+func matchRecursiveParts(patternParts, pathParts []string) bool {
+	if len(patternParts) == 0 {
+		return len(pathParts) == 0
+	}
+
+	if patternParts[0] == "**" {
+		if matchRecursiveParts(patternParts[1:], pathParts) {
+			return true
+		}
+		if len(pathParts) == 0 {
+			return false
+		}
+		return matchRecursiveParts(patternParts, pathParts[1:])
+	}
+
+	if len(pathParts) == 0 {
+		return false
+	}
+
+	ok, err := filepath.Match(patternParts[0], pathParts[0])
+	if err != nil || !ok {
+		return false
+	}
+
+	return matchRecursiveParts(patternParts[1:], pathParts[1:])
 }
