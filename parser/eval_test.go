@@ -265,6 +265,90 @@ func TestEvaluatorStringInterpolationUnknownVarPreserved(t *testing.T) {
 	}
 }
 
+func TestEvaluatorIntegerAddition(t *testing.T) {
+	input := `sum = 1 + 2`
+
+	p := NewParser(strings.NewReader(input), "test.bp")
+	file, errs := p.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("Parse errors: %v", errs)
+	}
+
+	eval := NewEvaluator()
+	eval.ProcessAssignments(file)
+
+	val, ok := eval.vars["sum"].(int64)
+	if !ok {
+		t.Fatalf("Expected int64, got %T", eval.vars["sum"])
+	}
+	if val != 3 {
+		t.Fatalf("Expected 3, got %d", val)
+	}
+}
+
+func TestEvaluatorListPlusEqualList(t *testing.T) {
+	input := `
+srcs = ["a.c"]
+srcs += ["b.c", "c.c"]`
+
+	p := NewParser(strings.NewReader(input), "test.bp")
+	file, errs := p.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("Parse errors: %v", errs)
+	}
+
+	eval := NewEvaluator()
+	eval.ProcessAssignments(file)
+
+	val, ok := eval.vars["srcs"].([]interface{})
+	if !ok {
+		t.Fatalf("Expected []interface{}, got %T", eval.vars["srcs"])
+	}
+	if len(val) != 3 {
+		t.Fatalf("Expected 3 items, got %d", len(val))
+	}
+	got := []string{val[0].(string), val[1].(string), val[2].(string)}
+	want := []string{"a.c", "b.c", "c.c"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("Expected %v, got %v", want, got)
+		}
+	}
+}
+
+func TestEvaluatorListPlusEqualScalar(t *testing.T) {
+	input := `
+srcs = ["a.c"]
+srcs += "b.c"`
+
+	p := NewParser(strings.NewReader(input), "test.bp")
+	file, errs := p.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("Parse errors: %v", errs)
+	}
+
+	eval := NewEvaluator()
+	eval.ProcessAssignments(file)
+
+	val, ok := eval.vars["srcs"].([]interface{})
+	if !ok {
+		t.Fatalf("Expected []interface{}, got %T", eval.vars["srcs"])
+	}
+	if len(val) != 2 {
+		t.Fatalf("Expected 2 items, got %d", len(val))
+	}
+	if val[0] != "a.c" || val[1] != "b.c" {
+		t.Fatalf("Expected [a.c b.c], got %v", val)
+	}
+}
+
+func TestEvaluatorMixedAdditionUnsupported(t *testing.T) {
+	got := evalOperator(int64(1), "x", '+')
+	if got != nil {
+		t.Fatalf("Expected nil for unsupported mixed addition, got %v", got)
+	}
+}
+
 func TestParseHostBlock(t *testing.T) {
 	input := `cc_library {
     name: "libfoo",

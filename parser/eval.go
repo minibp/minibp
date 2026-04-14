@@ -52,6 +52,12 @@ func (e *Evaluator) ProcessAssignmentsFromDefs(defs []Definition) {
 					} else if nv, ok := val.([]string); ok {
 						e.vars[assign.Name] = append(ev, nv...)
 					}
+				case []interface{}:
+					if nv, ok := val.([]interface{}); ok {
+						e.vars[assign.Name] = append(ev, nv...)
+					} else {
+						e.vars[assign.Name] = append(ev, val)
+					}
 				}
 			} else {
 				e.vars[assign.Name] = val
@@ -100,15 +106,15 @@ func (e *Evaluator) Eval(expr Expression) interface{} {
 
 func evalOperator(left, right interface{}, op rune) interface{} {
 	if op == '+' {
-		ls, lok := toString(left)
-		rs, rok := toString(right)
-		if lok && rok {
-			return ls + rs
-		}
 		li, lok := left.(int64)
 		ri, rok := right.(int64)
 		if lok && rok {
 			return li + ri
+		}
+		ls, lok := left.(string)
+		rs, rok := right.(string)
+		if lok && rok {
+			return ls + rs
 		}
 	}
 	return nil
