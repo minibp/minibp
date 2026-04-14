@@ -3,6 +3,7 @@ package dag
 
 import (
 	"fmt"
+	"sort"
 
 	"minibp/module"
 )
@@ -65,6 +66,9 @@ func (g *Graph) TopoSort() ([][]string, error) {
 
 	// Validate dependencies and count in-degrees
 	for from, deps := range g.edges {
+		if _, exists := g.modules[from]; !exists {
+			return nil, fmt.Errorf("module '%s' referenced in dependency graph does not exist", from)
+		}
 		for _, to := range deps {
 			if _, exists := g.modules[to]; !exists {
 				return nil, fmt.Errorf("dependency '%s' of module '%s' does not exist", to, from)
@@ -109,13 +113,7 @@ func (g *Graph) TopoSort() ([][]string, error) {
 		}
 
 		// Sort level for deterministic output
-		for i := 0; i < len(currentLevel)-1; i++ {
-			for j := i + 1; j < len(currentLevel); j++ {
-				if currentLevel[i] > currentLevel[j] {
-					currentLevel[i], currentLevel[j] = currentLevel[j], currentLevel[i]
-				}
-			}
-		}
+		sort.Strings(currentLevel)
 
 		// Mark current level as visited
 		for _, name := range currentLevel {

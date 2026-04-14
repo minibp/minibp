@@ -47,14 +47,16 @@ type Token struct {
 type Lexer struct {
 	scanner scanner.Scanner
 	ch      rune
+	errors  []error
 }
 
 // NewLexer creates a new lexer from an io.Reader
-func NewLexer(r io.Reader) *Lexer {
+func NewLexer(r io.Reader, fileName string) *Lexer {
 	l := &Lexer{}
 	l.scanner.Init(r)
+	l.scanner.Filename = fileName
 	l.scanner.Error = func(s *scanner.Scanner, msg string) {
-		// We'll handle errors ourselves
+		l.errors = append(l.errors, fmt.Errorf("%s: %s", s.Position, msg))
 	}
 	// Allow scanning strings (quoted and raw) and comments.
 	l.scanner.Mode = scanner.ScanIdents | scanner.ScanInts | scanner.ScanStrings | scanner.ScanRawStrings | scanner.ScanComments
@@ -174,6 +176,11 @@ func (l *Lexer) Position() scanner.Position {
 // Error creates an error with position information
 func (l *Lexer) Error(format string, args ...interface{}) error {
 	return fmt.Errorf("%s: %s", l.scanner.Position, fmt.Sprintf(format, args...))
+}
+
+// Errors returns lexer diagnostics collected from text/scanner.
+func (l *Lexer) Errors() []error {
+	return l.errors
 }
 
 // Unquote removes quotes from a string literal

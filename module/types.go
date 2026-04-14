@@ -312,14 +312,30 @@ func (f *CustomFactory) Create(ast *parser.Module, eval *parser.Evaluator) (Modu
 // Initialization
 // ============================================================================
 
-func init() {
+func registerBuiltInModuleTypes() {
 	Register("cc_library", &CCLibraryFactory{})
+	Register("cc_library_static", &CCLibraryFactory{})
+	Register("cc_library_shared", &CCLibraryFactory{})
+	Register("cc_object", &CCLibraryFactory{})
 	Register("cc_binary", &CCBinaryFactory{})
+	Register("cpp_library", &CCLibraryFactory{})
+	Register("cpp_binary", &CCBinaryFactory{})
 	Register("go_library", &GoLibraryFactory{})
 	Register("go_binary", &GoBinaryFactory{})
+	Register("go_test", &GoBinaryFactory{})
 	Register("java_library", &JavaLibraryFactory{})
+	Register("java_library_static", &JavaLibraryFactory{})
+	Register("java_library_host", &JavaLibraryFactory{})
 	Register("java_binary", &JavaBinaryFactory{})
+	Register("java_binary_host", &JavaBinaryFactory{})
+	Register("java_test", &JavaBinaryFactory{})
+	Register("java_import", &JavaLibraryFactory{})
+	Register("filegroup", &CustomFactory{})
 	Register("proto_library", &ProtoLibraryFactory{})
 	Register("proto_gen", &ProtoGenFactory{})
 	Register("custom", &CustomFactory{})
+}
+
+func init() {
+	registerBuiltInModuleTypes()
 }

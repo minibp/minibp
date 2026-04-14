@@ -31,6 +31,12 @@ func TestParseSimpleModule(t *testing.T) {
 	if module.Type != "cc_binary" {
 		t.Errorf("Expected module type 'cc_binary', got '%s'", module.Type)
 	}
+	if module.TypePos.Filename != "test.bp" {
+		t.Errorf("Expected module filename test.bp, got %q", module.TypePos.Filename)
+	}
+	if module.TypePos.Line != 1 || module.TypePos.Column != 1 {
+		t.Errorf("Expected module type position 1:1, got %d:%d", module.TypePos.Line, module.TypePos.Column)
+	}
 
 	// Check name property
 	nameProp := findProperty(module.Map, "name")
@@ -653,6 +659,9 @@ func TestParseInvalidStringLiteral(t *testing.T) {
 	if len(errs) == 0 {
 		t.Fatal("Expected parse error for invalid string literal")
 	}
+	if !strings.Contains(errs[0].Error(), "test.bp:2:11") {
+		t.Fatalf("Expected filename and position in error, got %q", errs[0].Error())
+	}
 }
 
 func TestParseMalformedSyntaxReportsError(t *testing.T) {
@@ -667,6 +676,25 @@ func TestParseMalformedSyntaxReportsError(t *testing.T) {
 		if len(errs) == 0 {
 			t.Fatalf("Expected parse error for malformed input: %q", input)
 		}
+	}
+}
+
+func TestParseErrorIncludesFilenameAndPosition(t *testing.T) {
+	input := `cc_binary {
+    name "hello",
+}`
+
+	p := NewParser(strings.NewReader(input), "diagnostic.bp")
+	_, errs := p.Parse()
+
+	if len(errs) == 0 {
+		t.Fatal("Expected parse error")
+	}
+	if !strings.Contains(errs[0].Error(), "diagnostic.bp:2:10") {
+		t.Fatalf("Expected filename and position in error, got %q", errs[0].Error())
+	}
+	if !strings.Contains(errs[0].Error(), "expected ':' after property name 'name'") {
+		t.Fatalf("Expected detailed parse message, got %q", errs[0].Error())
 	}
 }
 

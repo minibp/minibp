@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"minibp/ninja"
@@ -47,6 +48,9 @@ func (g *Graph) TopoSort() ([][]string, error) {
 	}
 
 	for from, deps := range g.edges {
+		if _, ok := g.nodes[from]; !ok {
+			return nil, fmt.Errorf("module '%s' referenced in dependency graph does not exist", from)
+		}
 		for _, to := range deps {
 			if _, ok := g.nodes[to]; !ok {
 				return nil, fmt.Errorf("dependency '%s' of '%s' not found", to, from)
@@ -78,13 +82,7 @@ func (g *Graph) TopoSort() ([][]string, error) {
 			return nil, fmt.Errorf("circular dependency detected")
 		}
 
-		for i := 0; i < len(currentLevel)-1; i++ {
-			for j := i + 1; j < len(currentLevel); j++ {
-				if currentLevel[i] > currentLevel[j] {
-					currentLevel[i], currentLevel[j] = currentLevel[j], currentLevel[i]
-				}
-			}
-		}
+		sort.Strings(currentLevel)
 
 		levels = append(levels, currentLevel)
 		for _, name := range currentLevel {

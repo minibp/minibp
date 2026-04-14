@@ -511,6 +511,61 @@ func TestCppSharedLibraryIncludesSharedDeps(t *testing.T) {
 	}
 }
 
+func TestCCLibraryObjectOutputsAreUniqueForDuplicateBasenames(t *testing.T) {
+	r := &ccLibrary{}
+	m := &parser.Module{
+		Type: "cc_library",
+		Map: &parser.Map{Properties: []*parser.Property{
+			{Name: "name", Value: &parser.String{Value: "dupes"}},
+			{Name: "srcs", Value: &parser.List{Values: []parser.Expression{
+				&parser.String{Value: "src/foo/util.c"},
+				&parser.String{Value: "tests/foo/util.c"},
+			}}},
+		}},
+	}
+
+	edge := r.NinjaEdge(m)
+	if !strings.Contains(edge, "build dupes_src_foo_util.o: cc_compile src/foo/util.c") {
+		t.Fatalf("Expected unique object output for first source, got: %s", edge)
+	}
+	if !strings.Contains(edge, "build dupes_tests_foo_util.o: cc_compile tests/foo/util.c") {
+		t.Fatalf("Expected unique object output for second source, got: %s", edge)
+	}
+	if !strings.Contains(edge, "build libdupes.a: cc_archive dupes_src_foo_util.o dupes_tests_foo_util.o") {
+		t.Fatalf("Expected archive to use both unique object outputs, got: %s", edge)
+	}
+}
+
+func TestCCObjectMultiSourceProducesOneOutputPerSource(t *testing.T) {
+	r := &ccObject{}
+	m := &parser.Module{
+		Type: "cc_object",
+		Map: &parser.Map{Properties: []*parser.Property{
+			{Name: "name", Value: &parser.String{Value: "bundle"}},
+			{Name: "srcs", Value: &parser.List{Values: []parser.Expression{
+				&parser.String{Value: "src/foo.c"},
+				&parser.String{Value: "src/bar.c"},
+			}}},
+		}},
+	}
+
+	outputs := r.Outputs(m)
+	if len(outputs) != 2 || outputs[0] != "bundle_src_foo.o" || outputs[1] != "bundle_src_bar.o" {
+		t.Fatalf("Expected one object output per source, got: %v", outputs)
+	}
+
+	edge := r.NinjaEdge(m)
+	if !strings.Contains(edge, "build bundle_src_foo.o: cc_compile src/foo.c") {
+		t.Fatalf("Expected compile edge for first source, got: %s", edge)
+	}
+	if !strings.Contains(edge, "build bundle_src_bar.o: cc_compile src/bar.c") {
+		t.Fatalf("Expected compile edge for second source, got: %s", edge)
+	}
+	if strings.Contains(edge, "cc_compile src/foo.c src/bar.c") {
+		t.Fatalf("Expected separate compile edges for multi-source cc_object, got: %s", edge)
+	}
+}
+
 func TestGeneratorAddsIncludesFromSharedLibs(t *testing.T) {
 	g := dag.NewGraph()
 

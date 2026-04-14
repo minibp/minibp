@@ -1,6 +1,9 @@
 package dag
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 // MockModule implements module.Module for testing
 type MockModule struct {
@@ -148,6 +151,19 @@ func TestTopoSortMissingDependency(t *testing.T) {
 	}
 }
 
+func TestTopoSortMissingSourceModule(t *testing.T) {
+	g := NewGraph()
+	g.AddModule(&MockModule{name: "B"})
+
+	// The source node was never added as a module.
+	g.AddEdge("A", "B")
+
+	_, err := g.TopoSort()
+	if err == nil {
+		t.Fatal("Expected error for missing source module")
+	}
+}
+
 func TestTopoSortLinearChain(t *testing.T) {
 	g := NewGraph()
 
@@ -199,5 +215,10 @@ func TestTopoSortIndependentModules(t *testing.T) {
 
 	if len(levels[0]) != 3 {
 		t.Errorf("Expected 3 modules at level 0, got %v", levels[0])
+	}
+
+	want := []string{"A", "B", "C"}
+	if !reflect.DeepEqual(levels[0], want) {
+		t.Fatalf("Expected sorted level %v, got %v", want, levels[0])
 	}
 }

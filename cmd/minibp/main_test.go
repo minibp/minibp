@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	"minibp/parser"
@@ -244,6 +245,37 @@ func TestMergeMapPropsOverridesScalar(t *testing.T) {
 	}
 	if !val.Value {
 		t.Fatal("Expected scalar property to be overridden")
+	}
+}
+
+func TestGraphTopoSortMissingSourceNode(t *testing.T) {
+	g := NewGraph()
+	g.AddNode("dep", &parser.Module{Type: "go_library"})
+	g.AddEdge("missing", "dep")
+
+	_, err := g.TopoSort()
+	if err == nil {
+		t.Fatal("Expected error for missing source node")
+	}
+	if !strings.Contains(err.Error(), "module 'missing'") {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+}
+
+func TestGraphTopoSortSortsEachLevel(t *testing.T) {
+	g := NewGraph()
+	g.AddNode("c", &parser.Module{Type: "go_library"})
+	g.AddNode("a", &parser.Module{Type: "go_library"})
+	g.AddNode("b", &parser.Module{Type: "go_library"})
+
+	levels, err := g.TopoSort()
+	if err != nil {
+		t.Fatalf("TopoSort returned error: %v", err)
+	}
+
+	want := [][]string{{"a", "b", "c"}}
+	if !reflect.DeepEqual(levels, want) {
+		t.Fatalf("TopoSort returned %v, want %v", levels, want)
 	}
 }
 

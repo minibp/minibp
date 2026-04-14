@@ -7,6 +7,18 @@ import (
 	"minibp/parser"
 )
 
+func registrySnapshot() map[string]Factory {
+	snapshot := make(map[string]Factory, len(Registry))
+	for k, v := range Registry {
+		snapshot[k] = v
+	}
+	return snapshot
+}
+
+func restoreRegistry(snapshot map[string]Factory) {
+	Registry = snapshot
+}
+
 // MockFactory implements Factory interface for testing
 type MockFactory struct{}
 
@@ -274,5 +286,60 @@ func TestCreateModulePreservesStructuredProps(t *testing.T) {
 	want := []interface{}{"fast", int64(7), true}
 	if !reflect.DeepEqual(features, want) {
 		t.Fatalf("Expected features %v, got %v", want, features)
+	}
+}
+
+func TestCoreSupportedModuleTypesAreRegistered(t *testing.T) {
+	snapshot := registrySnapshot()
+	defer restoreRegistry(snapshot)
+
+	Registry = make(map[string]Factory)
+	registerBuiltInModuleTypes()
+
+	tests := []struct {
+		moduleType string
+		wantType   string
+	}{
+		{moduleType: "cc_library", wantType: "cc_library"},
+		{moduleType: "cc_library_static", wantType: "cc_library_static"},
+		{moduleType: "cc_library_shared", wantType: "cc_library_shared"},
+		{moduleType: "cc_object", wantType: "cc_object"},
+		{moduleType: "cc_binary", wantType: "cc_binary"},
+		{moduleType: "cpp_library", wantType: "cpp_library"},
+		{moduleType: "cpp_binary", wantType: "cpp_binary"},
+		{moduleType: "go_library", wantType: "go_library"},
+		{moduleType: "go_binary", wantType: "go_binary"},
+		{moduleType: "go_test", wantType: "go_test"},
+		{moduleType: "java_library", wantType: "java_library"},
+		{moduleType: "java_library_static", wantType: "java_library_static"},
+		{moduleType: "java_library_host", wantType: "java_library_host"},
+		{moduleType: "java_binary", wantType: "java_binary"},
+		{moduleType: "java_binary_host", wantType: "java_binary_host"},
+		{moduleType: "java_test", wantType: "java_test"},
+		{moduleType: "java_import", wantType: "java_import"},
+		{moduleType: "filegroup", wantType: "filegroup"},
+		{moduleType: "custom", wantType: "custom"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.moduleType, func(t *testing.T) {
+			if Lookup(tc.moduleType) == nil {
+				t.Fatalf("Expected factory for %q", tc.moduleType)
+			}
+
+			m, err := Create(&parser.Module{
+				Type: tc.moduleType,
+				Map: &parser.Map{Properties: []*parser.Property{{
+					Name:  "name",
+					Value: &parser.String{Value: "mod"},
+				}}},
+			}, nil)
+			if err != nil {
+				t.Fatalf("Create failed for %q: %v", tc.moduleType, err)
+			}
+			if m.Type() != tc.wantType {
+				t.Fatalf("Expected created module type %q, got %q", tc.wantType, m.Type())
+			}
+		})
 	}
 }

@@ -113,6 +113,20 @@ func getName(m *parser.Module) string                { return GetStringProp(m, "
 func getSrcs(m *parser.Module) []string              { return GetListProp(m, "srcs") }
 func formatSrcs(srcs []string) string                { return strings.Join(srcs, " ") }
 
+func objectOutputName(moduleName, src string) string {
+	clean := filepath.Clean(src)
+	clean = strings.TrimPrefix(clean, "./")
+	clean = strings.TrimPrefix(clean, "../")
+	name := strings.TrimSuffix(clean, filepath.Ext(clean))
+	replacer := strings.NewReplacer("/", "_", "\\", "_", ":", "_", " ", "_")
+	name = replacer.Replace(name)
+	name = strings.Trim(name, "._")
+	if name == "" {
+		name = "obj"
+	}
+	return moduleName + "_" + name + ".o"
+}
+
 func getCC() string {
 	if v := os.Getenv("MINIBP_CC"); v != "" {
 		return v
@@ -220,11 +234,7 @@ func (r *ccLibrary) NinjaEdge(m *parser.Module) string {
 	var objFiles []string
 
 	for _, src := range srcs {
-		// Generate unique object file name: {name}_{basename}.o
-		base := filepath.Base(src)
-		obj := strings.TrimSuffix(base, ".c")
-		obj = strings.TrimSuffix(obj, ".cc")
-		obj = name + "_" + obj + ".o"
+		obj := objectOutputName(name, src)
 		objFiles = append(objFiles, obj)
 		edges.WriteString(fmt.Sprintf("build %s: cc_compile %s\n flags = %s\n", obj, src, cflags))
 	}
@@ -269,10 +279,7 @@ func (r *ccLibraryStatic) NinjaEdge(m *parser.Module) string {
 	var edges strings.Builder
 	var objFiles []string
 	for _, src := range srcs {
-		base := filepath.Base(src)
-		obj := strings.TrimSuffix(base, ".c")
-		obj = strings.TrimSuffix(obj, ".cc")
-		obj = name + "_" + obj + ".o"
+		obj := objectOutputName(name, src)
 		objFiles = append(objFiles, obj)
 		edges.WriteString(fmt.Sprintf("build %s: cc_compile %s\n flags = %s\n", obj, src, cflags))
 	}
@@ -315,10 +322,7 @@ func (r *ccLibraryShared) NinjaEdge(m *parser.Module) string {
 	var edges strings.Builder
 	var objFiles []string
 	for _, src := range srcs {
-		base := filepath.Base(src)
-		obj := strings.TrimSuffix(base, ".c")
-		obj = strings.TrimSuffix(obj, ".cc")
-		obj = name + "_" + obj + ".o"
+		obj := objectOutputName(name, src)
 		objFiles = append(objFiles, obj)
 		edges.WriteString(fmt.Sprintf("build %s: cc_compile %s\n flags = %s\n", obj, src, cflags))
 	}
@@ -349,10 +353,18 @@ func (r *ccObject) NinjaRule() string {
 }
 func (r *ccObject) Outputs(m *parser.Module) []string {
 	name := getName(m)
+	srcs := getSrcs(m)
 	if name == "" {
 		return nil
 	}
-	return []string{fmt.Sprintf("%s%s.o", name, getArchSuffix())}
+	if len(srcs) <= 1 {
+		return []string{fmt.Sprintf("%s%s.o", name, getArchSuffix())}
+	}
+	outputs := make([]string, 0, len(srcs))
+	for _, src := range srcs {
+		outputs = append(outputs, objectOutputName(name, src))
+	}
+	return outputs
 }
 func (r *ccObject) NinjaEdge(m *parser.Module) string {
 	name := getName(m)
@@ -361,8 +373,16 @@ func (r *ccObject) NinjaEdge(m *parser.Module) string {
 		return ""
 	}
 	cflags := getCflags(m)
-	out := r.Outputs(m)[0]
-	return fmt.Sprintf("build %s: cc_compile %s\n flags = %s\n", out, strings.Join(srcs, " "), cflags)
+	if len(srcs) == 1 {
+		out := r.Outputs(m)[0]
+		return fmt.Sprintf("build %s: cc_compile %s\n flags = %s\n", out, srcs[0], cflags)
+	}
+	var edges strings.Builder
+	outputs := r.Outputs(m)
+	for i, src := range srcs {
+		edges.WriteString(fmt.Sprintf("build %s: cc_compile %s\n flags = %s\n", outputs[i], src, cflags))
+	}
+	return edges.String()
 }
 func (r *ccObject) Desc(m *parser.Module, srcFile string) string { return "gcc" }
 
@@ -427,8 +447,7 @@ func (r *ccBinary) NinjaEdge(m *parser.Module) string {
 	var edges strings.Builder
 	var objFiles []string
 	for _, src := range srcs {
-		base := filepath.Base(src)
-		obj := strings.TrimSuffix(base, ".c") + "_" + name + ".o"
+		obj := objectOutputName(name, src)
 		objFiles = append(objFiles, obj)
 		edges.WriteString(fmt.Sprintf("build %s: cc_compile %s\n flags = %s\n", obj, src, cflags))
 	}
@@ -503,11 +522,7 @@ func (r *cppLibrary) NinjaEdge(m *parser.Module) string {
 	var edges strings.Builder
 	var objFiles []string
 	for _, src := range srcs {
-		base := filepath.Base(src)
-		obj := strings.TrimSuffix(base, ".cpp")
-		obj = strings.TrimSuffix(obj, ".cc")
-		obj = strings.TrimSuffix(obj, ".cxx")
-		obj = name + "_" + obj + ".o"
+		obj := objectOutputName(name, src)
 		objFiles = append(objFiles, obj)
 		edges.WriteString(fmt.Sprintf("build %s: cpp_compile %s\n flags = %s\n", obj, src, allFlags))
 	}
@@ -584,11 +599,7 @@ func (r *cppBinary) NinjaEdge(m *parser.Module) string {
 	var edges strings.Builder
 	var objFiles []string
 	for _, src := range srcs {
-		base := filepath.Base(src)
-		obj := strings.TrimSuffix(base, ".cpp")
-		obj = strings.TrimSuffix(obj, ".cc")
-		obj = strings.TrimSuffix(obj, ".cxx")
-		obj = name + "_" + obj + ".o"
+		obj := objectOutputName(name, src)
 		objFiles = append(objFiles, obj)
 		edges.WriteString(fmt.Sprintf("build %s: cpp_compile %s\n flags = %s\n", obj, src, allFlags))
 	}

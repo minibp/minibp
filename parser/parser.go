@@ -20,7 +20,7 @@ type Parser struct {
 // NewParser creates a new parser from an io.Reader
 func NewParser(r io.Reader, fileName string) *Parser {
 	p := &Parser{
-		lexer:    NewLexer(r),
+		lexer:    NewLexer(r, fileName),
 		fileName: fileName,
 		errors:   []error{},
 	}
@@ -67,6 +67,10 @@ func (p *Parser) Parse() (*File, []error) {
 		} else if def != nil {
 			file.Defs = append(file.Defs, def)
 		}
+	}
+
+	if len(p.errors) == 0 {
+		p.errors = append(p.errors, p.lexer.Errors()...)
 	}
 
 	return file, p.errors
@@ -149,11 +153,12 @@ func (p *Parser) parseModule(typeName string, typePos scanner.Position) (*Module
 		}
 	}
 	mod := &Module{
-		Type:   typeName,
-		Map:    &Map{Properties: filteredProps, LBracePos: lbracePos, RBracePos: rbracePos},
-		Arch:   archProps,
-		Host:   hostProps,
-		Target: targetProps,
+		Type:    typeName,
+		TypePos: typePos,
+		Map:     &Map{Properties: filteredProps, LBracePos: lbracePos, RBracePos: rbracePos},
+		Arch:    archProps,
+		Host:    hostProps,
+		Target:  targetProps,
 	}
 
 	return mod, nil
