@@ -419,6 +419,73 @@ func TestParseStringEscapes(t *testing.T) {
 	}
 }
 
+func TestParseListTrailingComma(t *testing.T) {
+	input := `my_list = ["a", "b",]`
+
+	p := NewParser(strings.NewReader(input), "test.bp")
+	file, errs := p.Parse()
+
+	if len(errs) > 0 {
+		t.Fatalf("Parse errors: %v", errs)
+	}
+
+	assign, ok := file.Defs[0].(*Assignment)
+	if !ok {
+		t.Fatalf("Expected *Assignment, got %T", file.Defs[0])
+	}
+
+	list, ok := assign.Value.(*List)
+	if !ok {
+		t.Fatalf("Expected value to be *List, got %T", assign.Value)
+	}
+
+	if len(list.Values) != 2 {
+		t.Fatalf("Expected 2 items, got %d", len(list.Values))
+	}
+}
+
+func TestParseListMissingComma(t *testing.T) {
+	input := `my_list = ["a" "b"]`
+
+	p := NewParser(strings.NewReader(input), "test.bp")
+	_, errs := p.Parse()
+
+	if len(errs) == 0 {
+		t.Fatal("Expected parse error for missing list comma")
+	}
+}
+
+func TestParseModulePropertiesMissingComma(t *testing.T) {
+	input := `cc_binary {
+    name: "hello"
+    srcs: ["main.c"],
+}`
+
+	p := NewParser(strings.NewReader(input), "test.bp")
+	_, errs := p.Parse()
+
+	if len(errs) == 0 {
+		t.Fatal("Expected parse error for missing property comma")
+	}
+}
+
+func TestParseNestedMapPropertiesMissingComma(t *testing.T) {
+	input := `cc_binary {
+    name: "hello",
+    config: {
+        debug: true
+        level: 2,
+    },
+}`
+
+	p := NewParser(strings.NewReader(input), "test.bp")
+	_, errs := p.Parse()
+
+	if len(errs) == 0 {
+		t.Fatal("Expected parse error for missing nested map property comma")
+	}
+}
+
 // Helper function to find a property by name
 func findProperty(m *Map, name string) *Property {
 	for _, prop := range m.Properties {

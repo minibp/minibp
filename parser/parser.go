@@ -165,10 +165,17 @@ func (p *Parser) parsePropertyList() ([]*Property, scanner.Position, error) {
 			properties = append(properties, prop)
 		}
 
-		// Optional comma after property
+		if p.curToken.Type == RBRACE {
+			break
+		}
+
+		// Comma separates adjacent properties; trailing commas are still allowed.
 		if p.curToken.Type == COMMA {
 			p.nextToken()
+			continue
 		}
+
+		return nil, rbracePos, fmt.Errorf("%s: expected ',' or '}' after property", p.curToken.Pos)
 	}
 
 	if p.curToken.Type != RBRACE {
@@ -359,10 +366,17 @@ func (p *Parser) parseList() (*List, error) {
 		}
 		values = append(values, expr)
 
-		// Optional comma after expression
+		if p.curToken.Type == RBRACKET {
+			break
+		}
+
+		// Comma separates adjacent list elements; trailing commas are still allowed.
 		if p.curToken.Type == COMMA {
 			p.nextToken()
+			continue
 		}
+
+		return nil, fmt.Errorf("%s: expected ',' or ']' after list element", p.curToken.Pos)
 	}
 
 	if p.curToken.Type != RBRACKET {
