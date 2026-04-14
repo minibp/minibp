@@ -177,8 +177,8 @@ func main() {
 		}
 
 		eval.EvalModule(mod)
-		expandGlobsInModule(mod, srcDir)
 		mergeVariantProps(mod, *archFlag, *hostFlag, eval)
+		expandGlobsInModule(mod, srcDir)
 		modules[name] = mod
 	}
 
