@@ -754,3 +754,46 @@ func TestParseSharedLibs(t *testing.T) {
 		t.Fatalf("Expected 1 shared_lib, got %d", len(list.Values))
 	}
 }
+
+func TestParseSelectMultiPatternCase(t *testing.T) {
+	input := `cc_binary {
+    name: "test",
+    srcs: select(os, {
+        "linux", "android": ["unix.c"],
+        default: ["generic.c"],
+    }),
+}`
+
+	p := NewParser(strings.NewReader(input), "test.bp")
+	file, errs := p.Parse()
+
+	if len(errs) > 0 {
+		t.Fatalf("Parse errors: %v", errs)
+	}
+
+	mod := file.Defs[0].(*Module)
+	prop := findProperty(mod.Map, "srcs")
+	if prop == nil {
+		t.Fatal("Missing 'srcs' property")
+	}
+
+	sel, ok := prop.Value.(*Select)
+	if !ok {
+		t.Fatalf("Expected *Select, got %T", prop.Value)
+	}
+	if len(sel.Cases) != 2 {
+		t.Fatalf("Expected 2 cases, got %d", len(sel.Cases))
+	}
+	if len(sel.Cases[0].Patterns) != 2 {
+		t.Fatalf("Expected 2 patterns in first case, got %d", len(sel.Cases[0].Patterns))
+	}
+
+	first, ok := sel.Cases[0].Patterns[0].Value.(*String)
+	if !ok || first.Value != "linux" {
+		t.Fatalf("Expected first pattern to be string 'linux', got %T (%v)", sel.Cases[0].Patterns[0].Value, sel.Cases[0].Patterns[0].Value)
+	}
+	second, ok := sel.Cases[0].Patterns[1].Value.(*String)
+	if !ok || second.Value != "android" {
+		t.Fatalf("Expected second pattern to be string 'android', got %T (%v)", sel.Cases[0].Patterns[1].Value, sel.Cases[0].Patterns[1].Value)
+	}
+}

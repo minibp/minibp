@@ -2,22 +2,12 @@ package module
 
 import (
 	"reflect"
+	"strconv"
+	"sync"
 	"testing"
 
 	"minibp/parser"
 )
-
-func registrySnapshot() map[string]Factory {
-	snapshot := make(map[string]Factory, len(Registry))
-	for k, v := range Registry {
-		snapshot[k] = v
-	}
-	return snapshot
-}
-
-func restoreRegistry(snapshot map[string]Factory) {
-	Registry = snapshot
-}
 
 // MockFactory implements Factory interface for testing
 type MockFactory struct{}
@@ -72,15 +62,14 @@ func TestBaseModuleCreation(t *testing.T) {
 
 // TestRegistryRegister tests registering factories
 func TestRegistryRegister(t *testing.T) {
-	// Clear registry before test
-	Registry = make(map[string]Factory)
+	resetRegistry()
 
 	f := &MockFactory{}
 
 	Register("mock_type", f)
 
-	if len(Registry) != 1 {
-		t.Fatalf("Expected 1 registered type, got %d", len(Registry))
+	if registryLen() != 1 {
+		t.Fatalf("Expected 1 registered type, got %d", registryLen())
 	}
 
 	factory := Lookup("mock_type")
@@ -91,8 +80,7 @@ func TestRegistryRegister(t *testing.T) {
 
 // TestRegistryLookupUnknown tests looking up unregistered types
 func TestRegistryLookupUnknown(t *testing.T) {
-	// Clear registry
-	Registry = make(map[string]Factory)
+	resetRegistry()
 
 	factory := Lookup("unknown_type")
 	if factory != nil {
@@ -114,14 +102,13 @@ func (f *TestFactoryB) Create(ast *parser.Module, eval *parser.Evaluator) (Modul
 
 // TestRegistryMultipleTypes tests registering multiple factories
 func TestRegistryMultipleTypes(t *testing.T) {
-	// Clear registry
-	Registry = make(map[string]Factory)
+	resetRegistry()
 
 	Register("type_a", &TestFactoryA{})
 	Register("type_b", &TestFactoryB{})
 
-	if len(Registry) != 2 {
-		t.Fatalf("Expected 2 registered types, got %d", len(Registry))
+	if registryLen() != 2 {
+		t.Fatalf("Expected 2 registered types, got %d", registryLen())
 	}
 
 	if Lookup("type_a") == nil {
@@ -154,8 +141,7 @@ func getListFromAST(ast *parser.Module, name string) []string {
 
 // TestCreateModuleFromAST tests creating a module from AST
 func TestCreateModuleFromAST(t *testing.T) {
-	// Clear registry
-	Registry = make(map[string]Factory)
+	resetRegistry()
 
 	// Register cc_binary factory
 	Register("cc_binary", &CCBinaryFactory{})
@@ -211,8 +197,7 @@ func TestCreateModuleFromAST(t *testing.T) {
 
 // TestCreateUnknownType tests creating module with unknown type
 func TestCreateUnknownType(t *testing.T) {
-	// Clear registry
-	Registry = make(map[string]Factory)
+	resetRegistry()
 
 	ast := &parser.Module{Type: "unknown_type"}
 	_, err := Create(ast, nil)
@@ -222,7 +207,7 @@ func TestCreateUnknownType(t *testing.T) {
 }
 
 func TestCreateModulePreservesDependencyFields(t *testing.T) {
-	Registry = make(map[string]Factory)
+	resetRegistry()
 	Register("cc_binary", &CCBinaryFactory{})
 
 	ast := &parser.Module{
@@ -247,7 +232,7 @@ func TestCreateModulePreservesDependencyFields(t *testing.T) {
 }
 
 func TestCreateModulePreservesStructuredProps(t *testing.T) {
-	Registry = make(map[string]Factory)
+	resetRegistry()
 	Register("cc_binary", &CCBinaryFactory{})
 
 	ast := &parser.Module{
@@ -293,7 +278,7 @@ func TestCoreSupportedModuleTypesAreRegistered(t *testing.T) {
 	snapshot := registrySnapshot()
 	defer restoreRegistry(snapshot)
 
-	Registry = make(map[string]Factory)
+	resetRegistry()
 	registerBuiltInModuleTypes()
 
 	tests := []struct {
@@ -341,5 +326,42 @@ func TestCoreSupportedModuleTypesAreRegistered(t *testing.T) {
 				t.Fatalf("Expected created module type %q, got %q", tc.wantType, m.Type())
 			}
 		})
+	}
+}
+
+func TestRegistryConcurrentAccess(t *testing.T) {
+	snapshot := registrySnapshot()
+	defer restoreRegistry(snapshot)
+
+	resetRegistry()
+
+	const workers = 32
+
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+
+			name := "type_" + strconv.Itoa(i)
+			Register(name, &MockFactory{})
+
+			if Lookup(name) == nil {
+				t.Errorf("Expected to find factory for %q", name)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	if registryLen() != workers {
+		t.Fatalf("Expected %d registered types, got %d", workers, registryLen())
+	}
+
+	for i := 0; i < workers; i++ {
+		name := "type_" + strconv.Itoa(i)
+		if Lookup(name) == nil {
+			t.Fatalf("Expected to find factory for %q", name)
+		}
 	}
 }

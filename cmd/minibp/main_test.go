@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -277,6 +279,82 @@ func TestGraphTopoSortSortsEachLevel(t *testing.T) {
 	if !reflect.DeepEqual(levels, want) {
 		t.Fatalf("TopoSort returned %v, want %v", levels, want)
 	}
+}
+
+func TestParseDefinitionsFromFilesClosesInputOnParseError(t *testing.T) {
+	oldOpen := openInputFile
+	oldParse := parseBlueprintFile
+	t.Cleanup(func() {
+		openInputFile = oldOpen
+		parseBlueprintFile = oldParse
+	})
+
+	tracker := &trackingReadCloser{Reader: strings.NewReader("")}
+	openInputFile = func(path string) (io.ReadCloser, error) {
+		return tracker, nil
+	}
+	parseBlueprintFile = func(r io.Reader, fileName string) (*parser.File, error) {
+		return nil, errors.New("boom")
+	}
+
+	_, err := parseDefinitionsFromFiles([]string{"broken.bp"})
+	if err == nil {
+		t.Fatal("Expected parseDefinitionsFromFiles error")
+	}
+	if !tracker.closed {
+		t.Fatal("Expected input file to be closed on parse error")
+	}
+}
+
+func TestGenerateNinjaFileClosesOutputOnGenerateError(t *testing.T) {
+	oldCreate := createOutputFile
+	t.Cleanup(func() {
+		createOutputFile = oldCreate
+	})
+
+	tracker := &trackingWriteCloser{}
+	createOutputFile = func(path string) (io.WriteCloser, error) {
+		return tracker, nil
+	}
+
+	err := generateNinjaFile("build.ninja", generatorFunc(func(w io.Writer) error {
+		return errors.New("boom")
+	}))
+	if err == nil {
+		t.Fatal("Expected generateNinjaFile error")
+	}
+	if !tracker.closed {
+		t.Fatal("Expected output file to be closed on generate error")
+	}
+}
+
+type trackingReadCloser struct {
+	io.Reader
+	closed bool
+}
+
+func (t *trackingReadCloser) Close() error {
+	t.closed = true
+	return nil
+}
+
+type trackingWriteCloser struct {
+	closed bool
+}
+
+func (t *trackingWriteCloser) Write(p []byte) (int, error) {
+	return len(p), nil
+}
+
+func (t *trackingWriteCloser) Close() error {
+	t.closed = true
+	return nil
+}
+
+type generatorFunc func(io.Writer) error
+
+func (f generatorFunc) Generate(w io.Writer) error {
+	return f(w)
 }
 
 func writeTestFile(t *testing.T, path string) {

@@ -3,6 +3,7 @@ package ninja
 
 import (
 	"bytes"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -665,6 +666,110 @@ func TestGeneratorDeduplicatesCustomRulesForSameCommand(t *testing.T) {
 	}
 	if !strings.Contains(output, " cmd = touch a.out") || !strings.Contains(output, " cmd = touch b.out") {
 		t.Fatalf("Expected per-edge custom commands, got output: %s", output)
+	}
+}
+
+func TestJavaLibraryEdgeIncludesDependencyClasspathAndJarInput(t *testing.T) {
+	r := &javaLibrary{}
+	m := &parser.Module{
+		Type: "java_library",
+		Map: &parser.Map{Properties: []*parser.Property{
+			{Name: "name", Value: &parser.String{Value: "app"}},
+			{Name: "srcs", Value: &parser.List{Values: []parser.Expression{
+				&parser.String{Value: "src/com/example/App.java"},
+			}}},
+			{Name: "deps", Value: &parser.List{Values: []parser.Expression{
+				&parser.String{Value: ":libjava"},
+			}}},
+		}},
+	}
+	dep := &parser.Module{
+		Type: "java_library",
+		Map: &parser.Map{Properties: []*parser.Property{
+			{Name: "name", Value: &parser.String{Value: "libjava"}},
+			{Name: "srcs", Value: &parser.List{Values: []parser.Expression{
+				&parser.String{Value: "src/com/example/Util.java"},
+			}}},
+		}},
+	}
+
+	g := dag.NewGraph()
+	rules := map[string]BuildRule{"java_library": r}
+	modules := map[string]*parser.Module{"app": m, "libjava": dep}
+	gen := NewGenerator(g, rules, modules)
+
+	edge := gen.addJavaDepsToEdge(m, r.NinjaEdge(m))
+	classpath := "libjava.jar"
+	if os.PathListSeparator != ':' {
+		classpath = strings.ReplaceAll(classpath, ":", string(os.PathListSeparator))
+	}
+	if !strings.Contains(edge, "flags =  -classpath "+classpath) {
+		t.Fatalf("Expected javac flags to include dependency classpath, got: %s", edge)
+	}
+	if !strings.Contains(edge, "build app.stamp: javac_lib src/com/example/App.java | libjava.jar") {
+		t.Fatalf("Expected javac edge to depend on dependency jar, got: %s", edge)
+	}
+	if !strings.Contains(edge, "build app.jar: jar_create app.stamp | libjava.jar") {
+		t.Fatalf("Expected jar edge to depend on dependency jar, got: %s", edge)
+	}
+}
+
+func TestGeneratorPreservesJavaJarDependencyPaths(t *testing.T) {
+	g := dag.NewGraph()
+
+	lib := &parser.Module{
+		Type: "java_library",
+		Map: &parser.Map{Properties: []*parser.Property{
+			{Name: "name", Value: &parser.String{Value: "libjava"}},
+			{Name: "srcs", Value: &parser.List{Values: []parser.Expression{
+				&parser.String{Value: "src/com/example/Util.java"},
+			}}},
+		}},
+	}
+	app := &parser.Module{
+		Type: "java_binary",
+		Map: &parser.Map{Properties: []*parser.Property{
+			{Name: "name", Value: &parser.String{Value: "javapp"}},
+			{Name: "srcs", Value: &parser.List{Values: []parser.Expression{
+				&parser.String{Value: "src/com/example/Main.java"},
+			}}},
+			{Name: "main_class", Value: &parser.String{Value: "com.example.Main"}},
+			{Name: "deps", Value: &parser.List{Values: []parser.Expression{
+				&parser.String{Value: ":libjava"},
+			}}},
+		}},
+	}
+
+	rules := map[string]BuildRule{
+		"java_library": &javaLibrary{},
+		"java_binary":  &javaBinary{},
+	}
+	modules := map[string]*parser.Module{
+		"libjava": lib,
+		"javapp":  app,
+	}
+
+	g.AddModule(&dagMockModule{name: "libjava"})
+	g.AddModule(&dagMockModule{name: "javapp"})
+	g.AddEdge("javapp", "libjava")
+
+	gen := NewGenerator(g, rules, modules)
+	gen.SetPathPrefix("examples/")
+
+	var buf bytes.Buffer
+	if err := gen.Generate(&buf); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "build javapp.stamp: javac_bin examples/src/com/example/Main.java | libjava.jar") {
+		t.Fatalf("Expected generated javac edge to retain jar dependency path, got: %s", output)
+	}
+	if strings.Contains(output, "examples/libjava.jar") {
+		t.Fatalf("Expected generated jar dependency to remain an output path, got: %s", output)
+	}
+	if !strings.Contains(output, "-classpath libjava.jar") {
+		t.Fatalf("Expected generated javac flags to include dependency classpath, got: %s", output)
 	}
 }
 

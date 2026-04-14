@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -10,6 +11,12 @@ import (
 
 	"minibp/ninja"
 	"minibp/parser"
+)
+
+var (
+	openInputFile      = func(path string) (io.ReadCloser, error) { return os.Open(path) }
+	createOutputFile   = func(path string) (io.WriteCloser, error) { return os.Create(path) }
+	parseBlueprintFile = parser.ParseFile
 )
 
 type Graph struct {
@@ -97,40 +104,50 @@ func (g *Graph) TopoSort() ([][]string, error) {
 }
 
 func main() {
-	var (
-		outFile  = flag.String("o", "build.ninja", "output ninja file")
-		all      = flag.Bool("a", false, "parse all .bp files in directory")
-		ccFlag   = flag.String("cc", "", "C compiler (default: gcc)")
-		cxxFlag  = flag.String("cxx", "", "C++ compiler (default: g++)")
-		arFlag   = flag.String("ar", "", "archiver (default: ar)")
-		archFlag = flag.String("arch", "", "target architecture (arm, arm64, x86, x86_64)")
-		hostFlag = flag.Bool("host", false, "build for host (overrides arch)")
-		osFlag   = flag.String("os", "", "target OS (linux, darwin, windows)")
-	)
-	flag.Parse()
-
-	if len(flag.Args()) < 1 && !*all {
-		fmt.Fprintln(os.Stderr, "Usage: minibp [-o output] [-a] [-cc CC] [-cxx CXX] [-ar AR] [-arch ARCH] [-host] [-os OS] <file.bp | directory>")
+	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+}
+
+func run(args []string, stdout, stderr io.Writer) error {
+	var (
+		fs       = flag.NewFlagSet("minibp", flag.ContinueOnError)
+		outFile  = fs.String("o", "build.ninja", "output ninja file")
+		all      = fs.Bool("a", false, "parse all .bp files in directory")
+		ccFlag   = fs.String("cc", "", "C compiler (default: gcc)")
+		cxxFlag  = fs.String("cxx", "", "C++ compiler (default: g++)")
+		arFlag   = fs.String("ar", "", "archiver (default: ar)")
+		archFlag = fs.String("arch", "", "target architecture (arm, arm64, x86, x86_64)")
+		hostFlag = fs.Bool("host", false, "build for host (overrides arch)")
+		osFlag   = fs.String("os", "", "target OS (linux, darwin, windows)")
+	)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	if len(fs.Args()) < 1 && !*all {
+		fmt.Fprintln(stderr, "Usage: minibp [-o output] [-a] [-cc CC] [-cxx CXX] [-ar AR] [-arch ARCH] [-host] [-os OS] <file.bp | directory>")
+		return fmt.Errorf("missing input path")
 	}
 
 	srcDir := "."
-	if *all && len(flag.Args()) > 0 {
-		srcDir = flag.Args()[0]
-	} else if len(flag.Args()) > 0 {
-		srcDir = filepath.Dir(flag.Args()[0])
+	if *all && len(fs.Args()) > 0 {
+		srcDir = fs.Args()[0]
+	} else if len(fs.Args()) > 0 {
+		srcDir = filepath.Dir(fs.Args()[0])
 	}
 
 	var files []string
 	if *all {
 		bpFiles, err := filepath.Glob(filepath.Join(srcDir, "*.bp"))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("error globbing bp files: %w", err)
 		}
 		files = bpFiles
 	} else {
-		files = flag.Args()
+		files = fs.Args()
 	}
 
 	eval := parser.NewEvaluator()
@@ -143,22 +160,9 @@ func main() {
 	}
 	eval.SetConfig("target", *archFlag)
 
-	var allDefs []parser.Definition
-	for _, file := range files {
-		f, err := os.Open(file)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error opening %s: %v\n", file, err)
-			os.Exit(1)
-		}
-		defer f.Close()
-
-		parsedFile, err := parser.ParseFile(f, file)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Parse error: %v\n", err)
-			os.Exit(1)
-		}
-
-		allDefs = append(allDefs, parsedFile.Defs...)
+	allDefs, err := parseDefinitionsFromFiles(files)
+	if err != nil {
+		return err
 	}
 
 	eval.ProcessAssignmentsFromDefs(allDefs)
@@ -177,8 +181,7 @@ func main() {
 		eval.EvalModule(mod)
 		mergeVariantProps(mod, *archFlag, *hostFlag, eval)
 		if err := expandGlobsInModule(mod, srcDir); err != nil {
-			fmt.Fprintf(os.Stderr, "Error expanding globs for module %s: %v\n", name, err)
-			os.Exit(1)
+			return fmt.Errorf("error expanding globs for module %s: %w", name, err)
 		}
 		modules[name] = mod
 	}
@@ -211,13 +214,6 @@ func main() {
 	for _, r := range rules {
 		ruleMap[r.Name()] = r
 	}
-
-	out, err := os.Create(*outFile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating output: %v\n", err)
-		os.Exit(1)
-	}
-	defer out.Close()
 
 	absOutFile, _ := filepath.Abs(*outFile)
 	absBuildDir := filepath.Dir(absOutFile)
@@ -258,12 +254,53 @@ func main() {
 	gen.SetToolchain(tc)
 	gen.SetArch(*archFlag)
 
-	if err := gen.Generate(out); err != nil {
-		fmt.Fprintf(os.Stderr, "Error generating ninja: %v\n", err)
-		os.Exit(1)
+	if err := generateNinjaFile(*outFile, gen); err != nil {
+		return err
 	}
 
-	fmt.Printf("Generated %s with %d modules\n", *outFile, len(modules))
+	fmt.Fprintf(stdout, "Generated %s with %d modules\n", *outFile, len(modules))
+	return nil
+}
+
+func parseDefinitionsFromFiles(files []string) ([]parser.Definition, error) {
+	var allDefs []parser.Definition
+	for _, file := range files {
+		f, err := openInputFile(file)
+		if err != nil {
+			return nil, fmt.Errorf("error opening %s: %w", file, err)
+		}
+
+		parsedFile, parseErr := parseBlueprintFile(f, file)
+		closeErr := f.Close()
+		if parseErr != nil {
+			return nil, fmt.Errorf("parse error: %w", parseErr)
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("error closing %s: %w", file, closeErr)
+		}
+
+		allDefs = append(allDefs, parsedFile.Defs...)
+	}
+
+	return allDefs, nil
+}
+
+func generateNinjaFile(path string, gen interface{ Generate(io.Writer) error }) error {
+	out, err := createOutputFile(path)
+	if err != nil {
+		return fmt.Errorf("error creating output: %w", err)
+	}
+
+	genErr := gen.Generate(out)
+	closeErr := out.Close()
+	if genErr != nil {
+		return fmt.Errorf("error generating ninja: %w", genErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("error closing output: %w", closeErr)
+	}
+
+	return nil
 }
 
 func getStringProp(m *parser.Module, name string) string {

@@ -406,6 +406,92 @@ func TestEvaluatorSelectWithOSCondition(t *testing.T) {
 	}
 }
 
+func TestEvaluatorSelectMatchesIntegerPattern(t *testing.T) {
+	input := `cc_binary {
+    name: "test",
+    srcs: select(level, {
+        1: ["one.c"],
+        2, 3: ["many.c"],
+        default: ["generic.c"],
+    }),
+}`
+
+	p := NewParser(strings.NewReader(input), "test.bp")
+	file, errs := p.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("Parse errors: %v", errs)
+	}
+
+	eval := NewEvaluator()
+	eval.SetVar("level", int64(3))
+	mod := file.Defs[0].(*Module)
+	result := eval.Eval(findProp(mod.Map, "srcs").Value)
+	list, ok := result.([]interface{})
+	if !ok {
+		t.Fatalf("Expected []interface{}, got %T", result)
+	}
+	if len(list) != 1 || list[0] != "many.c" {
+		t.Fatalf("Expected [many.c], got %v", list)
+	}
+}
+
+func TestEvaluatorSelectMatchesBooleanPattern(t *testing.T) {
+	input := `cc_binary {
+    name: "test",
+    srcs: select(enabled, {
+        true: ["enabled.c"],
+        false: ["disabled.c"],
+        default: ["generic.c"],
+    }),
+}`
+
+	p := NewParser(strings.NewReader(input), "test.bp")
+	file, errs := p.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("Parse errors: %v", errs)
+	}
+
+	eval := NewEvaluator()
+	eval.SetVar("enabled", true)
+	mod := file.Defs[0].(*Module)
+	result := eval.Eval(findProp(mod.Map, "srcs").Value)
+	list, ok := result.([]interface{})
+	if !ok {
+		t.Fatalf("Expected []interface{}, got %T", result)
+	}
+	if len(list) != 1 || list[0] != "enabled.c" {
+		t.Fatalf("Expected [enabled.c], got %v", list)
+	}
+}
+
+func TestEvaluatorSelectMultiPatternCase(t *testing.T) {
+	input := `cc_binary {
+    name: "test",
+    srcs: select(os, {
+        "linux", "android": ["unix.c"],
+        default: ["generic.c"],
+    }),
+}`
+
+	p := NewParser(strings.NewReader(input), "test.bp")
+	file, errs := p.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("Parse errors: %v", errs)
+	}
+
+	eval := NewEvaluator()
+	eval.SetConfig("os", "android")
+	mod := file.Defs[0].(*Module)
+	result := eval.Eval(findProp(mod.Map, "srcs").Value)
+	list, ok := result.([]interface{})
+	if !ok {
+		t.Fatalf("Expected []interface{}, got %T", result)
+	}
+	if len(list) != 1 || list[0] != "unix.c" {
+		t.Fatalf("Expected [unix.c], got %v", list)
+	}
+}
+
 func TestParseHostBlock(t *testing.T) {
 	input := `cc_library {
     name: "libfoo",

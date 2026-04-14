@@ -526,12 +526,20 @@ func (p *Parser) parseConfigurableCondition() (ConfigurableCondition, error) {
 
 // parseSelectCase parses a single case in a select
 func (p *Parser) parseSelectCase() (SelectCase, error) {
-	// Parse a single pattern (simplified for now)
 	pattern, err := p.parseSelectPattern()
 	if err != nil {
 		return SelectCase{}, err
 	}
 	patterns := []SelectPattern{pattern}
+	for p.curToken.Type == COMMA {
+		p.nextToken()
+
+		pattern, err := p.parseSelectPattern()
+		if err != nil {
+			return SelectCase{}, err
+		}
+		patterns = append(patterns, pattern)
+	}
 
 	if p.curToken.Type != COLON {
 		return SelectCase{}, fmt.Errorf("%s: expected ':' after select pattern", p.curToken.Pos)

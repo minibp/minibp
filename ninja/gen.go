@@ -321,6 +321,9 @@ func (g *Generator) Generate(w io.Writer) error {
 			}
 
 			if edgeDef != "" {
+				if strings.HasPrefix(m.Type, "java_") {
+					edgeDef = g.addJavaDepsToEdge(m, edgeDef)
+				}
 				edgeDef = g.addIncludesToEdge(edgeDef, includes)
 			}
 
@@ -432,6 +435,73 @@ func (g *Generator) addIncludesToEdge(edge string, includes []string) string {
 	return strings.Join(lines, "\n")
 }
 
+func (g *Generator) javaDepOutputs(moduleName string) []string {
+	m, ok := g.modules[moduleName]
+	if !ok || m == nil {
+		return nil
+	}
+
+	deps := GetListProp(m, "deps")
+	if len(deps) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]bool)
+	outputs := make([]string, 0, len(deps))
+	for _, dep := range deps {
+		depName := strings.TrimPrefix(dep, ":")
+		depMod, ok := g.modules[depName]
+		if !ok || depMod == nil {
+			continue
+		}
+		rule, ok := g.rules[depMod.Type]
+		if !ok {
+			continue
+		}
+		for _, out := range rule.Outputs(depMod) {
+			if strings.HasSuffix(out, ".jar") && !seen[out] {
+				seen[out] = true
+				outputs = append(outputs, out)
+			}
+		}
+	}
+
+	return outputs
+}
+
+func (g *Generator) addJavaDepsToEdge(m *parser.Module, edge string) string {
+	depJars := g.javaDepOutputs(getName(m))
+	if len(depJars) == 0 {
+		return edge
+	}
+
+	classpath := strings.Join(depJars, string(os.PathListSeparator))
+	lines := strings.Split(edge, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(line, "build ") {
+			parts := strings.SplitN(line, ": ", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			ruleAndInputs := strings.Fields(parts[1])
+			if len(ruleAndInputs) == 0 {
+				continue
+			}
+			ruleName := ruleAndInputs[0]
+			if strings.HasPrefix(ruleName, "javac_") || strings.HasPrefix(ruleName, "jar_") {
+				lines[i] = line + " | " + strings.Join(depJars, " ")
+			}
+			continue
+		}
+
+		if strings.Contains(line, "flags =") {
+			lines[i] = line + " -classpath " + classpath
+		}
+	}
+
+	return strings.Join(lines, "\n")
+}
+
 // adjustPaths updates paths in ninja edge to be relative to output directory
 func (g *Generator) adjustPaths(edge string) string {
 	if g.pathPrefix == "" {
@@ -474,6 +544,7 @@ func (g *Generator) adjustPaths(edge string) string {
 				!strings.HasSuffix(input, ".o") &&
 				!strings.HasSuffix(input, ".a") &&
 				!strings.HasSuffix(input, ".so") &&
+				!strings.HasSuffix(input, ".jar") &&
 				!strings.HasSuffix(input, ".stamp") {
 				inputs[i] = g.pathPrefix + input
 			}

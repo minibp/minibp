@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"reflect"
 	"regexp"
 	"strings"
 )
@@ -155,49 +156,22 @@ func (e *Evaluator) evalSelect(s *Select) interface{} {
 		return nil
 	}
 
-	cond := s.Conditions[0]
-	var configValue string
-
-	if cond.FunctionName == "" {
-		if v, ok := cond.Args[0].(*Variable); ok {
-			if val, ok := e.vars[v.Name]; ok {
-				configValue = fmt.Sprintf("%v", val)
-			} else {
-				configValue = v.Name
-			}
-		}
-	} else {
-		switch cond.FunctionName {
-		case "target":
-			configValue = e.config["target"]
-		case "arch":
-			configValue = e.config["arch"]
-		case "host":
-			configValue = e.config["host"]
-		case "os":
-			configValue = e.config["os"]
-		default:
-			configValue = e.config[cond.FunctionName]
-		}
-	}
+	configValue := e.evalSelectCondition(s.Conditions[0])
 
 	for _, c := range s.Cases {
 		for _, p := range c.Patterns {
-			if p.Value != nil {
-				patStr := e.evalPattern(p.Value)
-				if patStr == configValue {
-					return e.Eval(c.Value)
-				}
+			if e.isDefaultPattern(p) {
+				continue
+			}
+			if p.Value != nil && reflect.DeepEqual(e.evalPatternValue(p.Value), configValue) {
+				return e.Eval(c.Value)
 			}
 		}
 	}
 
 	for _, c := range s.Cases {
 		if len(c.Patterns) == 1 {
-			if v, ok := c.Patterns[0].Value.(*Variable); ok && v.Name == "default" {
-				return e.Eval(c.Value)
-			}
-			if s, ok := c.Patterns[0].Value.(*String); ok && s.Value == "default" {
+			if e.isDefaultPattern(c.Patterns[0]) {
 				return e.Eval(c.Value)
 			}
 		}
@@ -206,17 +180,58 @@ func (e *Evaluator) evalSelect(s *Select) interface{} {
 	return nil
 }
 
-func (e *Evaluator) evalPattern(expr Expression) string {
+func (e *Evaluator) evalSelectCondition(cond ConfigurableCondition) interface{} {
+	if cond.FunctionName == "" {
+		if len(cond.Args) == 0 {
+			return nil
+		}
+		return e.Eval(cond.Args[0])
+	}
+	if len(cond.Args) == 0 {
+		if val, ok := e.vars[cond.FunctionName]; ok {
+			return val
+		}
+	}
+
+	switch cond.FunctionName {
+	case "target":
+		return e.config["target"]
+	case "arch":
+		return e.config["arch"]
+	case "host":
+		return e.config["host"]
+	case "os":
+		return e.config["os"]
+	default:
+		return e.config[cond.FunctionName]
+	}
+}
+
+func (e *Evaluator) isDefaultPattern(pattern SelectPattern) bool {
+	if v, ok := pattern.Value.(*Variable); ok && v.Name == "default" {
+		return true
+	}
+	if s, ok := pattern.Value.(*String); ok && s.Value == "default" {
+		return true
+	}
+	return false
+}
+
+func (e *Evaluator) evalPatternValue(expr Expression) interface{} {
 	switch v := expr.(type) {
 	case *String:
 		return v.Value
+	case *Int64:
+		return v.Value
+	case *Bool:
+		return v.Value
 	case *Variable:
 		if val, ok := e.vars[v.Name]; ok {
-			return fmt.Sprintf("%v", val)
+			return val
 		}
 		return v.Name
 	default:
-		return ""
+		return e.Eval(expr)
 	}
 }
 
