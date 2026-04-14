@@ -1070,22 +1070,13 @@ func customRuleEdge(m *parser.Module, workDir string) string {
 		actualCmd = strings.ReplaceAll(actualCmd, "./...", strings.Join(pkgList, " "))
 	}
 
-	hash := 0
-	for _, c := range actualCmd {
-		hash = hash*31 + int(c)
-	}
-	if hash < 0 {
-		hash = -hash
-	}
-	ruleName := fmt.Sprintf("custom_cmd_%d", hash%10000)
-
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("rule %s\n command = %s\n\n", ruleName, actualCmd))
 	if srcStr == "" {
-		result.WriteString(fmt.Sprintf("build %s: %s\n", outStr, ruleName))
+		result.WriteString(fmt.Sprintf("build %s: custom_command\n", outStr))
 	} else {
-		result.WriteString(fmt.Sprintf("build %s: %s %s\n", outStr, ruleName, srcStr))
+		result.WriteString(fmt.Sprintf("build %s: custom_command %s\n", outStr, srcStr))
 	}
+	result.WriteString(fmt.Sprintf(" cmd = %s\n", actualCmd))
 
 	return result.String()
 }

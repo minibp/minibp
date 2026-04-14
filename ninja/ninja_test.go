@@ -530,3 +530,76 @@ func TestGeneratorAddsIncludesFromSharedLibs(t *testing.T) {
 		t.Fatalf("Expected shared lib exported header dir in output, got: %s", output)
 	}
 }
+
+func TestGeneratorDeduplicatesCustomRulesForSameCommand(t *testing.T) {
+	g := dag.NewGraph()
+
+	modA := &parser.Module{Type: "custom", Map: &parser.Map{Properties: []*parser.Property{
+		{Name: "name", Value: &parser.String{Value: "a"}},
+		{Name: "outs", Value: &parser.List{Values: []parser.Expression{&parser.String{Value: "a.out"}}}},
+		{Name: "cmd", Value: &parser.String{Value: "touch $out"}},
+	}}}
+	modB := &parser.Module{Type: "custom", Map: &parser.Map{Properties: []*parser.Property{
+		{Name: "name", Value: &parser.String{Value: "b"}},
+		{Name: "outs", Value: &parser.List{Values: []parser.Expression{&parser.String{Value: "b.out"}}}},
+		{Name: "cmd", Value: &parser.String{Value: "touch $out"}},
+	}}}
+
+	rules := map[string]BuildRule{"custom": &customRule{}}
+	modules := map[string]*parser.Module{"a": modA, "b": modB}
+
+	g.AddModule(&dagMockModule{name: "a"})
+	g.AddModule(&dagMockModule{name: "b"})
+
+	gen := NewGenerator(g, rules, modules)
+	var buf bytes.Buffer
+	if err := gen.Generate(&buf); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	output := buf.String()
+	if strings.Count(output, "rule custom_command") != 1 {
+		t.Fatalf("Expected one shared custom rule definition, got output: %s", output)
+	}
+	if strings.Count(output, "build a.out: custom_command") != 1 || strings.Count(output, "build b.out: custom_command") != 1 {
+		t.Fatalf("Expected both build edges to reuse shared custom rule, got output: %s", output)
+	}
+	if !strings.Contains(output, " cmd = touch a.out") || !strings.Contains(output, " cmd = touch b.out") {
+		t.Fatalf("Expected per-edge custom commands, got output: %s", output)
+	}
+}
+
+func TestGeneratorSeparatesCustomRulesForDifferentCommands(t *testing.T) {
+	g := dag.NewGraph()
+
+	modA := &parser.Module{Type: "custom", Map: &parser.Map{Properties: []*parser.Property{
+		{Name: "name", Value: &parser.String{Value: "a"}},
+		{Name: "outs", Value: &parser.List{Values: []parser.Expression{&parser.String{Value: "a.out"}}}},
+		{Name: "cmd", Value: &parser.String{Value: "touch $out"}},
+	}}}
+	modB := &parser.Module{Type: "custom", Map: &parser.Map{Properties: []*parser.Property{
+		{Name: "name", Value: &parser.String{Value: "b"}},
+		{Name: "outs", Value: &parser.List{Values: []parser.Expression{&parser.String{Value: "b.out"}}}},
+		{Name: "cmd", Value: &parser.String{Value: "cp in out"}},
+	}}}
+
+	rules := map[string]BuildRule{"custom": &customRule{}}
+	modules := map[string]*parser.Module{"a": modA, "b": modB}
+
+	g.AddModule(&dagMockModule{name: "a"})
+	g.AddModule(&dagMockModule{name: "b"})
+
+	gen := NewGenerator(g, rules, modules)
+	var buf bytes.Buffer
+	if err := gen.Generate(&buf); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	output := buf.String()
+	if strings.Count(output, "rule custom_command") != 1 {
+		t.Fatalf("Expected one shared custom rule definition, got output: %s", output)
+	}
+	if !strings.Contains(output, " cmd = touch a.out") || !strings.Contains(output, " cmd = cp in out") {
+		t.Fatalf("Expected distinct per-edge commands, got output: %s", output)
+	}
+}
