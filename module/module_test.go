@@ -1,6 +1,7 @@
 package module
 
 import (
+	"reflect"
 	"testing"
 
 	"minibp/parser"
@@ -205,5 +206,73 @@ func TestCreateUnknownType(t *testing.T) {
 	_, err := Create(ast, nil)
 	if err == nil {
 		t.Error("Expected error for unknown module type")
+	}
+}
+
+func TestCreateModulePreservesDependencyFields(t *testing.T) {
+	Registry = make(map[string]Factory)
+	Register("cc_binary", &CCBinaryFactory{})
+
+	ast := &parser.Module{
+		Type: "cc_binary",
+		Map: &parser.Map{Properties: []*parser.Property{
+			{Name: "name", Value: &parser.String{Value: "app"}},
+			{Name: "deps", Value: &parser.List{Values: []parser.Expression{&parser.String{Value: ":static"}}}},
+			{Name: "shared_libs", Value: &parser.List{Values: []parser.Expression{&parser.String{Value: ":shared"}}}},
+			{Name: "header_libs", Value: &parser.List{Values: []parser.Expression{&parser.String{Value: ":headers"}}}},
+		}},
+	}
+
+	m, err := Create(ast, nil)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	want := []string{":static", ":shared", ":headers"}
+	if !reflect.DeepEqual(m.Deps(), want) {
+		t.Fatalf("Expected deps %v, got %v", want, m.Deps())
+	}
+}
+
+func TestCreateModulePreservesStructuredProps(t *testing.T) {
+	Registry = make(map[string]Factory)
+	Register("cc_binary", &CCBinaryFactory{})
+
+	ast := &parser.Module{
+		Type: "cc_binary",
+		Map: &parser.Map{Properties: []*parser.Property{
+			{Name: "name", Value: &parser.String{Value: "app"}},
+			{Name: "config", Value: &parser.Map{Properties: []*parser.Property{
+				{Name: "enabled", Value: &parser.Bool{Value: true}},
+				{Name: "level", Value: &parser.Int64{Value: 2}},
+			}}},
+			{Name: "features", Value: &parser.List{Values: []parser.Expression{
+				&parser.String{Value: "fast"},
+				&parser.Int64{Value: 7},
+				&parser.Bool{Value: true},
+			}}},
+		}},
+	}
+
+	m, err := Create(ast, nil)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	config, ok := m.GetProp("config").(map[string]interface{})
+	if !ok {
+		t.Fatalf("Expected config map, got %T", m.GetProp("config"))
+	}
+	if config["enabled"] != true || config["level"] != int64(2) {
+		t.Fatalf("Unexpected config contents: %v", config)
+	}
+
+	features, ok := m.GetProp("features").([]interface{})
+	if !ok {
+		t.Fatalf("Expected features []interface{}, got %T", m.GetProp("features"))
+	}
+	want := []interface{}{"fast", int64(7), true}
+	if !reflect.DeepEqual(features, want) {
+		t.Fatalf("Expected features %v, got %v", want, features)
 	}
 }

@@ -1,6 +1,7 @@
 package module
 
 import (
+	"fmt"
 	"minibp/parser"
 )
 
@@ -55,36 +56,57 @@ func extractAllProps(ast *parser.Map, eval *parser.Evaluator) map[string]interfa
 		return props
 	}
 	for _, prop := range ast.Properties {
-		switch v := prop.Value.(type) {
-		case *parser.String:
-			props[prop.Name] = v.Value
-		case *parser.Int64:
-			props[prop.Name] = v.Value
-		case *parser.Bool:
-			props[prop.Name] = v.Value
-		case *parser.List:
-			list := make([]string, 0, len(v.Values))
-			for _, item := range v.Values {
-				if s, ok := item.(*parser.String); ok {
-					list = append(list, s.Value)
-				} else if eval != nil {
-					val := eval.Eval(item)
-					if s, ok := val.(string); ok {
-						list = append(list, s)
-					}
-				}
-			}
-			props[prop.Name] = list
-		default:
-			if eval != nil {
-				val := eval.Eval(v)
-				if val != nil {
-					props[prop.Name] = val
-				}
+		props[prop.Name] = extractPropValue(prop.Value, eval)
+	}
+	return props
+}
+
+func extractPropValue(expr parser.Expression, eval *parser.Evaluator) interface{} {
+	if eval != nil {
+		if val := eval.Eval(expr); val != nil {
+			return val
+		}
+	}
+
+	switch v := expr.(type) {
+	case *parser.String:
+		return v.Value
+	case *parser.Int64:
+		return v.Value
+	case *parser.Bool:
+		return v.Value
+	case *parser.List:
+		items := make([]interface{}, 0, len(v.Values))
+		for _, item := range v.Values {
+			items = append(items, extractPropValue(item, eval))
+		}
+		return items
+	case *parser.Map:
+		m := make(map[string]interface{}, len(v.Properties))
+		for _, prop := range v.Properties {
+			m[prop.Name] = extractPropValue(prop.Value, eval)
+		}
+		return m
+	case *parser.Variable:
+		return v.Name
+	default:
+		return fmt.Sprintf("%v", expr)
+	}
+}
+
+func collectDeps(ast *parser.Map, eval *parser.Evaluator) []string {
+	depKeys := []string{"deps", "shared_libs", "header_libs"}
+	seen := make(map[string]bool)
+	var deps []string
+	for _, key := range depKeys {
+		for _, dep := range extractStringList(ast, key, eval) {
+			if !seen[dep] {
+				seen[dep] = true
+				deps = append(deps, dep)
 			}
 		}
 	}
-	return props
+	return deps
 }
 
 func baseModuleFromAST(ast *parser.Module, eval *parser.Evaluator) BaseModule {
@@ -92,7 +114,7 @@ func baseModuleFromAST(ast *parser.Module, eval *parser.Evaluator) BaseModule {
 		Name_:  extractString(ast.Map, "name", eval),
 		Type_:  ast.Type,
 		Srcs_:  extractStringList(ast.Map, "srcs", eval),
-		Deps_:  extractStringList(ast.Map, "deps", eval),
+		Deps_:  collectDeps(ast.Map, eval),
 		Props_: extractAllProps(ast.Map, eval),
 	}
 }
