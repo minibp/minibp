@@ -311,19 +311,23 @@ func (g *Generator) Generate(w io.Writer) error {
 				}
 			}
 
-			sourceDir := g.sourceDir
-			if sourceDir == "." {
-				absPath, _ := filepath.Abs(g.sourceDir)
-				sourceDir = filepath.Base(absPath)
-			}
+					sourceDir := g.sourceDir
 
-			edgeDef := rule.NinjaEdge(m, ctx)
-			if m.Type == "custom" {
-				edgeDef = customRuleEdge(m, g.workDir)
-			}
-			if edgeDef == "" && m.Type != "cc_library_headers" {
-				continue
-			}
+					if sourceDir == "." {
+
+						absPath, _ := filepath.Abs(g.sourceDir)
+
+						sourceDir = filepath.Base(absPath)
+
+					}
+
+					edgeDef := rule.NinjaEdge(m, ctx)
+
+					if edgeDef == "" && m.Type != "cc_library_headers" {
+
+						continue
+
+					}
 
 			if edgeDef != "" {
 				if strings.HasPrefix(m.Type, "java_") {
