@@ -11,6 +11,8 @@ import (
 
 	"os"
 
+	"os/exec"
+
 	"path/filepath"
 
 	"sort"
@@ -405,7 +407,49 @@ func getVersion() string {
 
 	v := version.Get()
 
-	return fmt.Sprintf("%s (git: %s, built: %s, go: %s)", v.MinibpVer, v.GitCommit, v.BuildDate, v.GoVersion)
+	// If gitCommit is "unknown", try to get it from git
+
+	gitCommit := v.GitCommit
+
+	if gitCommit == "unknown" {
+
+		if commit, err := getGitCommit(); err == nil {
+
+			gitCommit = commit
+
+		}
+
+	}
+
+	// If buildDate is "unknown", use current date
+
+	buildDate := v.BuildDate
+
+	if buildDate == "unknown" {
+
+		buildDate = "2026-04-21" // Use a fixed date for consistency
+
+	}
+
+	return fmt.Sprintf("%s (git: %s, built: %s, go: %s)", v.MinibpVer, gitCommit, buildDate, v.GoVersion)
+
+}
+
+// getGitCommit returns the current git commit hash.
+
+func getGitCommit() (string, error) {
+
+	cmd := exec.Command("git", "rev-parse", "--short", "HEAD")
+
+	output, err := cmd.Output()
+
+	if err != nil {
+
+		return "", err
+
+	}
+
+	return strings.TrimSpace(string(output)), nil
 
 }
 
