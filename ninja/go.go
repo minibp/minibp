@@ -28,15 +28,43 @@ func (r *goLibrary) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 }
 
 func (r *goLibrary) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
+
 	name := getName(m)
+
 	srcs := getSrcs(m)
+
 	if name == "" || len(srcs) == 0 {
+
 		return ""
+
 	}
 
 	goflags := getGoflags(m)
+
+	ldflags := getLdflags(m)
+
 	out := r.Outputs(m, ctx)[0]
-	return fmt.Sprintf("build %s: go_build_archive %s\n flags = %s\n", out, strings.Join(srcs, " "), goflags)
+
+
+
+	// Build command with ldflags if present
+
+	var cmd string
+
+	if ldflags != "" {
+
+		cmd = fmt.Sprintf("go build -buildmode=archive -ldflags \"%s\" -o $out $in", ldflags)
+
+	} else {
+
+		cmd = "go build -buildmode=archive -o $out $in"
+
+	}
+
+
+
+	return fmt.Sprintf("build %s: go_build_archive %s\n flags = %s\n cmd = %s\n", out, strings.Join(srcs, " "), goflags, cmd)
+
 }
 
 func (r *goLibrary) Desc(m *parser.Module, srcFile string) string {
@@ -63,28 +91,65 @@ func (r *goBinary) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 }
 
 func (r *goBinary) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
+
 	name := getName(m)
+
 	srcs := getSrcs(m)
+
 	deps := GetListProp(m, "deps")
+
 	if name == "" || len(srcs) == 0 {
+
 		return ""
+
 	}
 
 	goflags := getGoflags(m)
+
+	ldflags := getLdflags(m)
+
 	out := r.Outputs(m, ctx)[0]
 
 	var libFiles []string
+
 	for _, dep := range deps {
+
 		depName := strings.TrimPrefix(dep, ":")
+
 		libFiles = append(libFiles, depName+".a")
+
 	}
 
 	srcStr := strings.Join(srcs, " ")
-	if len(libFiles) > 0 {
-		libStr := strings.Join(libFiles, " ")
-		return fmt.Sprintf("build %s: go_build %s | %s\n flags = %s\n", out, srcStr, libStr, goflags)
+
+
+
+	// Build command with ldflags if present
+
+	var cmd string
+
+	if ldflags != "" {
+
+		cmd = fmt.Sprintf("go build -ldflags \"%s\" -o $out $in", ldflags)
+
+	} else {
+
+		cmd = "go build -o $out $in"
+
 	}
-	return fmt.Sprintf("build %s: go_build %s\n flags = %s\n", out, srcStr, goflags)
+
+
+
+	if len(libFiles) > 0 {
+
+		libStr := strings.Join(libFiles, " ")
+
+		return fmt.Sprintf("build %s: go_build %s | %s\n flags = %s\n cmd = %s\n", out, srcStr, libStr, goflags, cmd)
+
+	}
+
+	return fmt.Sprintf("build %s: go_build %s\n flags = %s\n cmd = %s\n", out, srcStr, goflags, cmd)
+
 }
 
 func (r *goBinary) Desc(m *parser.Module, srcFile string) string {
@@ -111,19 +176,47 @@ func (r *goTest) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 }
 
 func (r *goTest) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
+
 	name := getName(m)
+
 	srcs := getSrcs(m)
+
 	if name == "" || len(srcs) == 0 {
+
 		return ""
+
 	}
 
 	goflags := getGoflags(m)
+
+	ldflags := getLdflags(m)
+
 	out := r.Outputs(m, ctx)[0]
 
 	// Extract package path from first source file
+
 	pkgPath := "./" + filepath.Dir(srcs[0])
 
-	return fmt.Sprintf("build %s: go_test\n pkg = %s\n flags = %s\n", out, pkgPath, goflags)
+
+
+	// Build command with ldflags if present
+
+	var cmd string
+
+	if ldflags != "" {
+
+		cmd = fmt.Sprintf("go test -ldflags \"%s\" -c -o $out $pkg", ldflags)
+
+	} else {
+
+		cmd = "go test -c -o $out $pkg"
+
+	}
+
+
+
+	return fmt.Sprintf("build %s: go_test\n pkg = %s\n flags = %s\n cmd = %s\n", out, pkgPath, goflags, cmd)
+
 }
 
 func (r *goTest) Desc(m *parser.Module, srcFile string) string {

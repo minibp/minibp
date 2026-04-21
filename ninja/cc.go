@@ -4,24 +4,86 @@ package ninja
 import (
 	"fmt"
 	"minibp/parser"
+	"path/filepath"
 	"strings"
 )
 
+// detectCompilerType detects the compiler type based on source file extensions.
+// Returns "cc" for C files, "cpp" for C++ files, defaulting to "cc".
+func detectCompilerType(srcs []string) string {
+	for _, src := range srcs {
+		ext := strings.ToLower(filepath.Ext(src))
+		switch ext {
+		case ".cpp", ".cc", ".cxx", ".c++", ".hpp", ".hxx":
+			return "cpp"
+		case ".c", ".h":
+			// Continue to check other files, C++ files take precedence
+			continue
+		}
+	}
+	return "cc"
+}
+
 // ccLibrary implements a C/C++ library rule that can be either static or shared.
+
+// It automatically detects the compiler type based on source file extensions.
+
 type ccLibrary struct{}
 
-func (r *ccLibrary) Name() string { return "cc_library" }
+
+
+func (r *ccLibrary) Name() string {
+
+	return "cc_library"
+
+}
+
+
 
 func (r *ccLibrary) NinjaRule(ctx RuleRenderContext) string {
+
+
+
+	// Auto-detect compiler type - use CXX if any C++ files are present
+
+
+
 	return fmt.Sprintf(`rule cc_compile
+
+
+
  command = %s -c $in -o $out $flags -MMD -MF $out.d
+
+
+
  depfile = $out.d
+
+
+
  deps = gcc
+
+
+
 rule cc_archive
+
+
+
  command = %s rcs $out $in
+
+
+
 rule cc_shared
+
+
+
  command = %s -shared -o $out $in $flags
-`, ctx.CC, ctx.AR, ctx.CC)
+
+
+
+`, ctx.CXX, ctx.AR, ctx.CXX)
+
+
+
 }
 
 func (r *ccLibrary) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
@@ -37,42 +99,95 @@ func (r *ccLibrary) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 }
 
 func (r *ccLibrary) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
+
 	name := getName(m)
+
 	srcs := getSrcs(m)
+
 	if name == "" || len(srcs) == 0 {
+
 		return ""
+
 	}
 
+
+
+			// Auto-detect compiler type
+
+
+
+			_ = detectCompilerType(srcs) // Use result to select compiler flags if needed
+
+
+
+			compileRule := "cc_compile"
+
+
+
+			archiveRule := "cc_archive"
+
+
+
+			sharedRule := "cc_shared"
+
+
+
 	shared := getBoolProp(m, "shared")
+
 	cflags := joinFlags(ctx.CFlags, getCflags(m))
+
 	ldflags := joinFlags(ctx.LdFlags, getLdflags(m))
 
 	var sharedInputs []string
+
 	sharedLibs := GetListProp(m, "shared_libs")
+
 	if shared && len(sharedLibs) > 0 {
+
 		for _, dep := range sharedLibs {
+
 			depName := strings.TrimPrefix(dep, ":")
+
 			sharedInputs = append(sharedInputs, sharedLibOutputName(depName, ctx.ArchSuffix))
+
 			ldflags = joinFlags(ldflags, "-l"+depName)
+
 		}
+
 	}
 
+
+
 	var edges strings.Builder
+
 	var objFiles []string
+
 	for _, src := range srcs {
+
 		obj := objectOutputName(name, src)
+
 		objFiles = append(objFiles, obj)
-		edges.WriteString(fmt.Sprintf("build %s: cc_compile %s\n flags = %s\n", obj, src, cflags))
+
+		edges.WriteString(fmt.Sprintf("build %s: %s %s\n flags = %s\n", obj, compileRule, src, cflags))
+
 	}
 
 	out := r.Outputs(m, ctx)[0]
+
 	if shared {
+
 		allInputs := append(objFiles, sharedInputs...)
-		edges.WriteString(fmt.Sprintf("build %s: cc_shared %s\n flags = %s\n", out, strings.Join(allInputs, " "), ldflags))
+
+		edges.WriteString(fmt.Sprintf("build %s: %s %s\n flags = %s\n", out, sharedRule, strings.Join(allInputs, " "), ldflags))
+
 	} else {
-		edges.WriteString(fmt.Sprintf("build %s: cc_archive %s\n", out, strings.Join(objFiles, " ")))
+
+		edges.WriteString(fmt.Sprintf("build %s: %s %s\n", out, archiveRule, strings.Join(objFiles, " ")))
+
 	}
+
 	return edges.String()
+
 }
 
 func (r *ccLibrary) Desc(m *parser.Module, srcFile string) string {

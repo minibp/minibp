@@ -1,18 +1,39 @@
 // Android.bp - Build file for minibp itself
 // This demonstrates using minibp to build itself
 
+// Version package - demonstrates goflags and ldflags usage
+go_library {
+  name: "libversion",
+  srcs: [
+    "internal/version/version.go",
+  ],
+  goflags: ["-trimpath"],
+  ldflags: [
+    "-X 'minibp/internal/version.gitTag=0.001'",
+    "-s",
+    "-w",
+  ],
+}
+
 // Go binary for minibp CLI
 go_binary {
-    name: "minibp",
-    srcs: [
-        "cmd/minibp/main.go",
-    ],
-    deps: [
-        ":libparser",
-        ":libdag",
-        ":libninja",
-        ":libmodule",
-    ],
+  name: "minibp",
+  srcs: [
+    "cmd/minibp/main.go",
+  ],
+  deps: [
+    ":libparser",
+    ":libdag",
+    ":libninja",
+    ":libmodule",
+    ":libversion",
+  ],
+  goflags: ["-trimpath"],
+  ldflags: [
+    "-X 'minibp/internal/version.gitTag=0.001'",
+    "-s",
+    "-w",
+  ],
 }
 
 // Parser library

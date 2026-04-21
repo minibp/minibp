@@ -301,15 +301,33 @@ func (f *CCBinaryFactory) Create(ast *parser.Module, eval *parser.Evaluator) (Mo
 // ============================================================================
 
 // GoLibrary represents a Go library module.
+
 // It includes package path and import path for Go compilation.
+
 // Fields:
-//   - BaseModule: Embedded base module with common properties
-//   - PackagePath: The filesystem path to the Go package
-//   - ImportPath: The import path (used for go mod compatibility)
+
+// - BaseModule: Embedded base module with common properties
+
+// - PackagePath: The filesystem path to the Go package
+
+// - ImportPath: The import path (used for go mod compatibility)
+
+// - GoFlags: Go compiler flags (e.g., "-gcflags")
+
+// - LDFlags: Go linker flags (e.g., "-ldflags")
+
 type GoLibrary struct {
+
 	BaseModule
+
 	PackagePath string
+
 	ImportPath  string
+
+	GoFlags     []string
+
+	LDFlags     []string
+
 }
 
 // GoLibraryFactory creates GoLibrary instances from AST nodes.
@@ -317,32 +335,69 @@ type GoLibrary struct {
 type GoLibraryFactory struct{}
 
 // Create instantiates a GoLibrary from a parsed AST module.
+
 // Parameters:
-//   - ast: The parser.Module AST node
-//   - eval: Optional evaluator for computing expression values
+
+// - ast: The parser.Module AST node
+
+// - eval: Optional evaluator for computing expression values
+
 //
+
 // Returns:
+
 //
+
 //	A configured GoLibrary and any error that occurred
+
 func (f *GoLibraryFactory) Create(ast *parser.Module, eval *parser.Evaluator) (Module, error) {
+
 	m := &GoLibrary{
+
 		BaseModule:  baseModuleFromAST(ast, eval),
+
 		PackagePath: extractString(ast.Map, "pkg", eval),
+
 		ImportPath:  extractString(ast.Map, "importpath", eval),
+
+		GoFlags:     extractStringList(ast.Map, "goflags", eval),
+
+		LDFlags:     extractStringList(ast.Map, "ldflags", eval),
+
 	}
+
 	return m, nil
+
 }
 
 // GoBinary represents a Go binary (executable) or test module.
+
 // It has the same properties as GoLibrary since both are Go packages.
+
 // Fields:
-//   - BaseModule: Embedded base module with common properties
-//   - PackagePath: The filesystem path to the Go package
-//   - ImportPath: The import path (used for go mod compatibility)
+
+// - BaseModule: Embedded base module with common properties
+
+// - PackagePath: The filesystem path to the Go package
+
+// - ImportPath: The import path (used for go mod compatibility)
+
+// - GoFlags: Go compiler flags (e.g., "-gcflags")
+
+// - LDFlags: Go linker flags (e.g., "-ldflags")
+
 type GoBinary struct {
+
 	BaseModule
+
 	PackagePath string
+
 	ImportPath  string
+
+	GoFlags     []string
+
+	LDFlags     []string
+
 }
 
 // GoBinaryFactory creates GoBinary instances from AST nodes.
@@ -350,20 +405,39 @@ type GoBinary struct {
 type GoBinaryFactory struct{}
 
 // Create instantiates a GoBinary from a parsed AST module.
+
 // Parameters:
-//   - ast: The parser.Module AST node
-//   - eval: Optional evaluator for computing expression values
+
+// - ast: The parser.Module AST node
+
+// - eval: Optional evaluator for computing expression values
+
 //
+
 // Returns:
+
 //
+
 //	A configured GoBinary and any error that occurred
+
 func (f *GoBinaryFactory) Create(ast *parser.Module, eval *parser.Evaluator) (Module, error) {
+
 	m := &GoBinary{
+
 		BaseModule:  baseModuleFromAST(ast, eval),
+
 		PackagePath: extractString(ast.Map, "pkg", eval),
+
 		ImportPath:  extractString(ast.Map, "importpath", eval),
+
+		GoFlags:     extractStringList(ast.Map, "goflags", eval),
+
+		LDFlags:     extractStringList(ast.Map, "ldflags", eval),
+
 	}
+
 	return m, nil
+
 }
 
 // ============================================================================
