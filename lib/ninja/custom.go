@@ -13,10 +13,15 @@ type customRule struct{}
 func (r *customRule) Name() string { return "custom_rule" }
 
 func (r *customRule) NinjaRule(ctx RuleRenderContext) string {
+
 	return `rule custom_command
-  command = $command $in $flags
-  description = Custom build $out
+
+ command = $command $in $flags
+
+ description = Custom build $out
+
 `
+
 }
 
 func (r *customRule) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
@@ -108,10 +113,15 @@ type protoLibraryRule struct{}
 func (r *protoLibraryRule) Name() string { return "proto_library" }
 
 func (r *protoLibraryRule) NinjaRule(ctx RuleRenderContext) string {
+
 	return `rule proto_compile
-  command = protoc --cpp_out=$out $in
-  description = Compiling proto $in
+
+ command = protoc --cpp_out=$out $in
+
+ description = Compiling proto $in
+
 `
+
 }
 
 func (r *protoLibraryRule) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
@@ -202,10 +212,15 @@ type protoGenRule struct{}
 func (r *protoGenRule) Name() string { return "proto_gen" }
 
 func (r *protoGenRule) NinjaRule(ctx RuleRenderContext) string {
+
 	return `rule proto_gen
-  command = protoc --cpp_out=$out $in
-  description = Generating proto files $in
+
+ command = protoc --cpp_out=$out $in
+
+ description = Generating proto files $in
+
 `
+
 }
 
 func (r *protoGenRule) Outputs(m *parser.Module, ctx RuleRenderContext) []string {

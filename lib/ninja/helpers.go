@@ -120,6 +120,60 @@ func getGoflags(m *parser.Module) string {
 	return strings.Join(GetListProp(m, "goflags"), " ")
 }
 
+// getLto retrieves the LTO mode from a module.
+func getLto(m *parser.Module) string {
+	return GetStringProp(m, "lto")
+}
+
+// getLocalIncludeDirs retrieves local include directories from a module.
+func getLocalIncludeDirs(m *parser.Module) []string {
+	return GetListProp(m, "local_include_dirs")
+}
+
+// getSystemIncludeDirs retrieves system include directories from a module.
+func getSystemIncludeDirs(m *parser.Module) []string {
+	return GetListProp(m, "system_include_dirs")
+}
+
+// getGoTargetVariants retrieves target variant keys from a Go module.
+func getGoTargetVariants(m *parser.Module) []string {
+	if m.Target == nil {
+		return nil
+	}
+	var keys []string
+	for _, p := range m.Target.Properties {
+		if _, ok := p.Value.(*parser.Map); !ok {
+			continue
+		}
+		keys = append(keys, p.Name)
+	}
+	return keys
+}
+
+// getGoTargetProp extracts a string property from a target variant sub-map.
+func getGoTargetProp(m *parser.Module, variant, prop string) string {
+	if m.Target == nil {
+		return ""
+	}
+	for _, p := range m.Target.Properties {
+		if p.Name != variant {
+			continue
+		}
+		sub, ok := p.Value.(*parser.Map)
+		if !ok {
+			return ""
+		}
+		for _, sp := range sub.Properties {
+			if sp.Name == prop {
+				if s, ok := sp.Value.(*parser.String); ok {
+					return s.Value
+				}
+			}
+		}
+	}
+	return ""
+}
+
 // getJavaflags retrieves Java compiler flags from a module.
 func getJavaflags(m *parser.Module) string {
 	return strings.Join(GetListProp(m, "javaflags"), " ")

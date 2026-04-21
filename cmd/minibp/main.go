@@ -150,17 +150,22 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 		all = fs.Bool("a", false, "parse all .bp files in directory")
 
-		ccFlag = fs.String("cc", "", "C compiler (default: gcc)")
-
-		cxxFlag = fs.String("cxx", "", "C++ compiler (default: g++)")
-
-		arFlag = fs.String("ar", "", "archiver (default: ar)")
-
+		ccFlag   = fs.String("cc", "", "C compiler (default: gcc)")
+		cxxFlag  = fs.String("cxx", "", "C++ compiler (default: g++)")
+		arFlag   = fs.String("ar", "", "archiver (default: ar)")
 		archFlag = fs.String("arch", "", "target architecture (arm, arm64, x86, x86_64)")
+
+		multilibFlag = fs.String("multilib", "", "comma-separated target architectures for multi-arch build (e.g. arm64,x86_64)")
 
 		hostFlag = fs.Bool("host", false, "build for host (overrides arch)")
 
 		osFlag = fs.String("os", "", "target OS (linux, darwin, windows)")
+
+		ltoFlag = fs.String("lto", "", "default LTO mode: full, thin, or none")
+
+		sysrootFlag = fs.String("sysroot", "", "sysroot path for cross-compilation")
+
+		ccacheFlag = fs.String("ccache", "", "ccache path (empty: auto-detect, 'no': disable)")
 
 		versionFlag = fs.Bool("v", false, "show version information")
 	)
@@ -322,8 +327,29 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if *arFlag != "" {
 		tc.AR = *arFlag
 	}
+	if *sysrootFlag != "" {
+		tc.Sysroot = *sysrootFlag
+	}
+	if *ltoFlag != "" {
+		tc.Lto = *ltoFlag
+	}
+	if *ccacheFlag == "no" {
+		tc.Ccache = ""
+	} else if *ccacheFlag != "" {
+		tc.Ccache = *ccacheFlag
+	}
+
 	gen.SetToolchain(tc)
 	gen.SetArch(*archFlag)
+
+	// Handle multi-arch builds
+	if *multilibFlag != "" {
+		archs := strings.Split(*multilibFlag, ",")
+		for i := range archs {
+			archs[i] = strings.TrimSpace(archs[i])
+		}
+		gen.SetMultilib(archs)
+	}
 
 	// Generate and write the Ninja build file
 	if err := generateNinjaFile(*outFile, gen); err != nil {

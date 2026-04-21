@@ -8,8 +8,6 @@ import (
 	"strings"
 )
 
-// detectCompilerType detects the compiler type based on source file extensions.
-// Returns "cc" for C files, "cpp" for C++ files, defaulting to "cc".
 func detectCompilerType(srcs []string) string {
 	for _, src := range srcs {
 		ext := strings.ToLower(filepath.Ext(src))
@@ -17,61 +15,86 @@ func detectCompilerType(srcs []string) string {
 		case ".cpp", ".cc", ".cxx", ".c++", ".hpp", ".hxx":
 			return "cpp"
 		case ".c", ".h":
-			// Continue to check other files, C++ files take precedence
 			continue
 		}
 	}
 	return "cc"
 }
 
-// ccLibrary implements a C/C++ library rule that can be either static or shared.
-
-// It automatically detects the compiler type based on source file extensions.
-
-type ccLibrary struct{}
-
-func (r *ccLibrary) Name() string {
-
-	return "cc_library"
-
+func ccCompilerCmd(ctx RuleRenderContext, compilerType string) string {
+	cc := ctx.CC
+	if compilerType == "cpp" {
+		cc = ctx.CXX
+	}
+	if ctx.Ccache != "" {
+		return ctx.Ccache + " " + cc
+	}
+	return cc
 }
 
+func ltoFlags(lto string) (compile string, link string) {
+	switch lto {
+	case "full":
+		return "-flto -ffat-lto-objects", "-flto -fuse-linker-plugin"
+	case "thin":
+		return "-flto=thin -ffat-lto-objects", "-flto=thin -fuse-linker-plugin"
+	default:
+		return "", ""
+	}
+}
+
+func ltoArchiveCmd(ar string, lto string) string {
+	if lto == "full" || lto == "thin" {
+		if strings.Contains(ar, "gcc-ar") || strings.Contains(ar, "llvm-ar") {
+			return ar
+		}
+		if strings.HasPrefix(ar, "ar") {
+			return "gcc-ar"
+		}
+		return "gcc-ar"
+	}
+	return ar
+}
+
+// ccLibrary implements a C/C++ library rule that can be either static or shared.
+type ccLibrary struct{}
+
+func (r *ccLibrary) Name() string { return "cc_library" }
+
 func (r *ccLibrary) NinjaRule(ctx RuleRenderContext) string {
+	arCmd := ltoArchiveCmd(ctx.AR, ctx.Lto)
+	ltoCompile, ltoLink := ltoFlags(ctx.Lto)
 
-	return fmt.Sprintf(`rule cc_compile
+	rules := fmt.Sprintf(`rule cc_compile
+ command = %s -c $in -o $out $flags -MMD -MF $out.d
+ depfile = $out.d
+ deps = gcc
 
-
-
-  command = ${CC} -c $in -o $out $flags -MMD -MF $out.d
-
-
-
-  depfile = $out.d
-
-
-
-  deps = gcc
-
-
+rule cc_compile_lto
+ command = %s -c $in -o $out $flags -MMD -MF $out.d
+ depfile = $out.d
+ deps = gcc
 
 rule cc_archive
-
-
-
-  command = %s rcs $out $in
-
-
+ command = %s rcs $out @$out.rsp
+ rspfile = $out.rsp
+ rspfile_content = $in
+ restat = true
 
 rule cc_shared
+ command = ${CC} -shared -o $out @$out.rsp $flags
+ rspfile = $out.rsp
+ rspfile_content = $in
 
+rule cc_link_lto
+ command = %s -o $out $in $flags %s
 
+rule thinlto_codegen
+ command = %s -flto=thin -c -fthin-link=$out.thinlto.o $in -o $out %s
+`, ccCompilerCmd(ctx, "cc"), ccCompilerCmd(ctx, "cc"),
+		arCmd, ctx.CC, ltoLink, ccCompilerCmd(ctx, "cc"), ltoCompile)
 
-  command = ${CC} -shared -o $out $in $flags
-
-
-
-`, ctx.AR)
-
+	return rules
 }
 
 func (r *ccLibrary) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
@@ -87,89 +110,71 @@ func (r *ccLibrary) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 }
 
 func (r *ccLibrary) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
-
 	name := getName(m)
-
 	srcs := getSrcs(m)
-
 	if name == "" || len(srcs) == 0 {
-
 		return ""
-
 	}
-
-	// Auto-detect compiler type and select compiler
 
 	compilerType := detectCompilerType(srcs)
-
-	compiler := ctx.CC
-
-	if compilerType == "cpp" {
-
-		compiler = ctx.CXX
-
+	compiler := ccCompilerCmd(ctx, compilerType)
+	shared := getBoolProp(m, "shared")
+	moduleLto := getLto(m)
+	if moduleLto == "" {
+		moduleLto = ctx.Lto
 	}
 
+	ltoCompileExtra, _ := ltoFlags(moduleLto)
 	compileRule := "cc_compile"
-
+	if moduleLto != "" {
+		compileRule = "cc_compile_lto"
+	}
 	archiveRule := "cc_archive"
-
 	sharedRule := "cc_shared"
 
-	shared := getBoolProp(m, "shared")
-
 	cflags := joinFlags(ctx.CFlags, getCflags(m), getCppflags(m))
-
+	if ltoCompileExtra != "" {
+		cflags = strings.TrimSpace(cflags + " " + ltoCompileExtra)
+	}
 	ldflags := joinFlags(ctx.LdFlags, getLdflags(m))
 
 	var sharedInputs []string
-
 	sharedLibs := GetListProp(m, "shared_libs")
-
 	if shared && len(sharedLibs) > 0 {
-
 		for _, dep := range sharedLibs {
-
 			depName := strings.TrimPrefix(dep, ":")
-
 			sharedInputs = append(sharedInputs, sharedLibOutputName(depName, ctx.ArchSuffix))
-
 			ldflags = joinFlags(ldflags, "-l"+depName)
-
 		}
-
 	}
 
 	var edges strings.Builder
-
 	var objFiles []string
 
 	for _, src := range srcs {
-
 		obj := objectOutputName(name, src)
-
 		objFiles = append(objFiles, obj)
-
 		edges.WriteString(fmt.Sprintf("build %s: %s %s\n flags = %s\n CC = %s\n", obj, compileRule, src, cflags, compiler))
-
 	}
 
 	out := r.Outputs(m, ctx)[0]
 
 	if shared {
-
 		allInputs := append(objFiles, sharedInputs...)
-
 		edges.WriteString(fmt.Sprintf("build %s: %s %s\n flags = %s\n CC = %s\n", out, sharedRule, strings.Join(allInputs, " "), ldflags, compiler))
-
 	} else {
-
 		edges.WriteString(fmt.Sprintf("build %s: %s %s\n", out, archiveRule, strings.Join(objFiles, " ")))
+	}
 
+	if moduleLto == "thin" {
+		for _, src := range srcs {
+			obj := objectOutputName(name, src)
+			codegen := obj + ".thinlto.o"
+			edges.WriteString(fmt.Sprintf("build %s: thinlto_codegen %s\n", codegen, obj))
+		}
 	}
 
 	return edges.String()
-
 }
 
 func (r *ccLibrary) Desc(m *parser.Module, srcFile string) string {
@@ -188,13 +193,24 @@ type ccLibraryStatic struct{}
 func (r *ccLibraryStatic) Name() string { return "cc_library_static" }
 
 func (r *ccLibraryStatic) NinjaRule(ctx RuleRenderContext) string {
+	arCmd := ltoArchiveCmd(ctx.AR, ctx.Lto)
 	return fmt.Sprintf(`rule cc_compile
  command = %s -c $in -o $out $flags -MMD -MF $out.d
  depfile = $out.d
  deps = gcc
+
+rule cc_compile_lto
+ command = %s -c $in -o $out $flags -MMD -MF $out.d
+ depfile = $out.d
+ deps = gcc
+
 rule cc_archive
- command = %s rcs $out $in
-`, ctx.CC, ctx.AR)
+ command = %s rcs $out @$out.rsp
+ rspfile = $out.rsp
+ rspfile_content = $in
+ restat = true
+
+`, ccCompilerCmd(ctx, "cc"), ccCompilerCmd(ctx, "cc"), arCmd)
 }
 
 func (r *ccLibraryStatic) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
@@ -212,18 +228,40 @@ func (r *ccLibraryStatic) NinjaEdge(m *parser.Module, ctx RuleRenderContext) str
 		return ""
 	}
 
+	moduleLto := getLto(m)
+	if moduleLto == "" {
+		moduleLto = ctx.Lto
+	}
+	ltoCompileExtra, _ := ltoFlags(moduleLto)
+	compileRule := "cc_compile"
+	if moduleLto != "" {
+		compileRule = "cc_compile_lto"
+	}
+
 	cflags := joinFlags(ctx.CFlags, getCflags(m))
+	if ltoCompileExtra != "" {
+		cflags = strings.TrimSpace(cflags + " " + ltoCompileExtra)
+	}
 
 	var edges strings.Builder
 	var objFiles []string
 	for _, src := range srcs {
 		obj := objectOutputName(name, src)
 		objFiles = append(objFiles, obj)
-		edges.WriteString(fmt.Sprintf("build %s: cc_compile %s\n flags = %s\n", obj, src, cflags))
+		edges.WriteString(fmt.Sprintf("build %s: %s %s\n flags = %s\n", obj, compileRule, src, cflags))
 	}
 
 	out := r.Outputs(m, ctx)[0]
 	edges.WriteString(fmt.Sprintf("build %s: cc_archive %s\n", out, strings.Join(objFiles, " ")))
+
+	if moduleLto == "thin" {
+		for _, src := range srcs {
+			obj := objectOutputName(name, src)
+			codegen := obj + ".thinlto.o"
+			edges.WriteString(fmt.Sprintf("build %s: thinlto_codegen %s\n", codegen, obj))
+		}
+	}
+
 	return edges.String()
 }
 
@@ -240,13 +278,31 @@ type ccLibraryShared struct{}
 func (r *ccLibraryShared) Name() string { return "cc_library_shared" }
 
 func (r *ccLibraryShared) NinjaRule(ctx RuleRenderContext) string {
+	_, ltoLink := ltoFlags(ctx.Lto)
+	linkSuffix := ""
+	if ltoLink != "" {
+		linkSuffix = " " + ltoLink
+	}
+
 	return fmt.Sprintf(`rule cc_compile
  command = %s -c $in -o $out $flags -MMD -MF $out.d
  depfile = $out.d
  deps = gcc
+
+rule cc_compile_lto
+ command = %s -c $in -o $out $flags -MMD -MF $out.d
+ depfile = $out.d
+ deps = gcc
+
 rule cc_shared
- command = %s -shared -o $out $in $flags
-`, ctx.CC, ctx.CC)
+ command = %s -shared -o $out @$out.rsp $flags%s
+ rspfile = $out.rsp
+ rspfile_content = $in
+
+rule cc_link_lto
+ command = %s -o $out $in $flags%s
+
+`, ccCompilerCmd(ctx, "cc"), ccCompilerCmd(ctx, "cc"), ctx.CC, linkSuffix, ctx.CC, linkSuffix)
 }
 
 func (r *ccLibraryShared) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
@@ -264,7 +320,20 @@ func (r *ccLibraryShared) NinjaEdge(m *parser.Module, ctx RuleRenderContext) str
 		return ""
 	}
 
+	moduleLto := getLto(m)
+	if moduleLto == "" {
+		moduleLto = ctx.Lto
+	}
+	ltoCompileExtra, _ := ltoFlags(moduleLto)
+	compileRule := "cc_compile"
+	if moduleLto != "" {
+		compileRule = "cc_compile_lto"
+	}
+
 	cflags := joinFlags(ctx.CFlags, getCflags(m), getCppflags(m))
+	if ltoCompileExtra != "" {
+		cflags = strings.TrimSpace(cflags + " " + ltoCompileExtra)
+	}
 	ldflags := joinFlags(ctx.LdFlags, getLdflags(m))
 
 	var sharedInputs []string
@@ -280,12 +349,26 @@ func (r *ccLibraryShared) NinjaEdge(m *parser.Module, ctx RuleRenderContext) str
 	for _, src := range srcs {
 		obj := objectOutputName(name, src)
 		objFiles = append(objFiles, obj)
-		edges.WriteString(fmt.Sprintf("build %s: cc_compile %s\n flags = %s\n", obj, src, cflags))
+		edges.WriteString(fmt.Sprintf("build %s: %s %s\n flags = %s\n", obj, compileRule, src, cflags))
 	}
 
 	out := r.Outputs(m, ctx)[0]
 	allInputs := append(objFiles, sharedInputs...)
-	edges.WriteString(fmt.Sprintf("build %s: cc_shared %s\n flags = %s\n", out, strings.Join(allInputs, " "), ldflags))
+
+	linkRule := "cc_shared"
+	if moduleLto != "" {
+		linkRule = "cc_link_lto"
+	}
+	edges.WriteString(fmt.Sprintf("build %s: %s %s\n flags = %s\n", out, linkRule, strings.Join(allInputs, " "), ldflags))
+
+	if moduleLto == "thin" {
+		for _, src := range srcs {
+			obj := objectOutputName(name, src)
+			codegen := obj + ".thinlto.o"
+			edges.WriteString(fmt.Sprintf("build %s: thinlto_codegen %s\n", codegen, obj))
+		}
+	}
+
 	return edges.String()
 }
 
@@ -306,7 +389,13 @@ func (r *ccObject) NinjaRule(ctx RuleRenderContext) string {
  command = %s -c $in -o $out $flags -MMD -MF $out.d
  depfile = $out.d
  deps = gcc
-`, ctx.CC)
+
+rule cc_compile_lto
+ command = %s -c $in -o $out $flags -MMD -MF $out.d
+ depfile = $out.d
+ deps = gcc
+
+`, ccCompilerCmd(ctx, "cc"), ccCompilerCmd(ctx, "cc"))
 }
 
 func (r *ccObject) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
@@ -332,16 +421,30 @@ func (r *ccObject) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 		return ""
 	}
 
+	moduleLto := getLto(m)
+	if moduleLto == "" {
+		moduleLto = ctx.Lto
+	}
+	ltoCompileExtra, _ := ltoFlags(moduleLto)
+	compileRule := "cc_compile"
+	if moduleLto != "" {
+		compileRule = "cc_compile_lto"
+	}
+
 	cflags := joinFlags(ctx.CFlags, getCflags(m))
+	if ltoCompileExtra != "" {
+		cflags = strings.TrimSpace(cflags + " " + ltoCompileExtra)
+	}
+
 	if len(srcs) == 1 {
 		out := r.Outputs(m, ctx)[0]
-		return fmt.Sprintf("build %s: cc_compile %s\n flags = %s\n", out, srcs[0], cflags)
+		return fmt.Sprintf("build %s: %s %s\n flags = %s\n", out, compileRule, srcs[0], cflags)
 	}
 
 	var edges strings.Builder
 	outputs := r.Outputs(m, ctx)
 	for i, src := range srcs {
-		edges.WriteString(fmt.Sprintf("build %s: cc_compile %s\n flags = %s\n", outputs[i], src, cflags))
+		edges.WriteString(fmt.Sprintf("build %s: %s %s\n flags = %s\n", outputs[i], compileRule, src, cflags))
 	}
 	return edges.String()
 }
@@ -356,13 +459,42 @@ type ccBinary struct{}
 func (r *ccBinary) Name() string { return "cc_binary" }
 
 func (r *ccBinary) NinjaRule(ctx RuleRenderContext) string {
+	arCmd := ltoArchiveCmd(ctx.AR, ctx.Lto)
+	_, ltoLink := ltoFlags(ctx.Lto)
+	linkSuffix := ""
+	if ltoLink != "" {
+		linkSuffix = " " + ltoLink
+	}
+
 	return fmt.Sprintf(`rule cc_compile
  command = %s -c $in -o $out $flags -MMD -MF $out.d
  depfile = $out.d
  deps = gcc
+
+rule cc_compile_lto
+ command = %s -c $in -o $out $flags -MMD -MF $out.d
+ depfile = $out.d
+ deps = gcc
+
 rule cc_link
- command = %s -o $out $in $flags
-`, ctx.CC, ctx.CC)
+ command = ${CC} -o $out @$out.rsp $flags%s
+ rspfile = $out.rsp
+ rspfile_content = $in
+
+rule cc_link_lto
+ command = ${CC} -o $out $in $flags%s
+
+rule cc_archive
+ command = %s rcs $out @$out.rsp
+ rspfile = $out.rsp
+ rspfile_content = $in
+ restat = true
+
+rule thinlto_codegen
+ command = %s -flto=thin -c -fthin-link=$out.thinlto.o $in -o $out %s
+
+`, ccCompilerCmd(ctx, "cc"), ccCompilerCmd(ctx, "cc"), linkSuffix, linkSuffix,
+		arCmd, ccCompilerCmd(ctx, "cc"), "")
 }
 
 func (r *ccBinary) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
@@ -374,93 +506,78 @@ func (r *ccBinary) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 }
 
 func (r *ccBinary) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
-
 	name := getName(m)
-
 	srcs := getSrcs(m)
-
 	deps := GetListProp(m, "deps")
-
 	sharedLibs := GetListProp(m, "shared_libs")
-
 	if name == "" || len(srcs) == 0 {
-
 		return ""
-
 	}
 
-	// Auto-detect compiler type and select compiler
-
 	compilerType := detectCompilerType(srcs)
+	compiler := ccCompilerCmd(ctx, compilerType)
 
-	compiler := ctx.CC
-
-	if compilerType == "cpp" {
-
-		compiler = ctx.CXX
-
+	moduleLto := getLto(m)
+	if moduleLto == "" {
+		moduleLto = ctx.Lto
+	}
+	ltoCompileExtra, _ := ltoFlags(moduleLto)
+	compileRule := "cc_compile"
+	if moduleLto != "" {
+		compileRule = "cc_compile_lto"
 	}
 
 	cflags := joinFlags(ctx.CFlags, getCflags(m), getCppflags(m))
-
+	if ltoCompileExtra != "" {
+		cflags = strings.TrimSpace(cflags + " " + ltoCompileExtra)
+	}
 	ldflags := joinFlags(ctx.LdFlags, getLdflags(m))
-
 	linkFlags := ldflags
 
 	var libFiles []string
-
 	for _, dep := range deps {
-
 		depName := strings.TrimPrefix(dep, ":")
-
 		libFiles = append(libFiles, staticLibOutputName(depName, ctx.ArchSuffix))
-
 	}
-
 	for _, dep := range sharedLibs {
-
 		depName := strings.TrimPrefix(dep, ":")
-
 		libFiles = append(libFiles, sharedLibOutputName(depName, ctx.ArchSuffix))
-
 		linkFlags = joinFlags(linkFlags, "-l"+depName)
-
 	}
 
 	var edges strings.Builder
-
 	var objFiles []string
-
 	for _, src := range srcs {
-
 		obj := objectOutputName(name, src)
-
 		objFiles = append(objFiles, obj)
-
-		edges.WriteString(fmt.Sprintf("build %s: cc_compile %s\n flags = %s\n CC = %s\n", obj, src, cflags, compiler))
-
+		edges.WriteString(fmt.Sprintf("build %s: %s %s\n flags = %s\n CC = %s\n", obj, compileRule, src, cflags, compiler))
 	}
 
 	out := r.Outputs(m, ctx)[0]
-
 	allInputs := append(objFiles, libFiles...)
 
-	edges.WriteString(fmt.Sprintf("build %s: cc_link %s\n flags = %s\n CC = %s\n", out, strings.Join(allInputs, " "), linkFlags, compiler))
+	linkRule := "cc_link"
+	if moduleLto != "" {
+		linkRule = "cc_link_lto"
+	}
+	edges.WriteString(fmt.Sprintf("build %s: %s %s\n flags = %s\n CC = %s\n", out, linkRule, strings.Join(allInputs, " "), linkFlags, compiler))
+
+	if moduleLto == "thin" {
+		for _, src := range srcs {
+			obj := objectOutputName(name, src)
+			codegen := obj + ".thinlto.o"
+			edges.WriteString(fmt.Sprintf("build %s: thinlto_codegen %s\n", codegen, obj))
+		}
+	}
 
 	return edges.String()
-
 }
 
 func (r *ccBinary) Desc(m *parser.Module, srcFile string) string {
-
 	if srcFile == "" {
-
 		return "cc_link"
-
 	}
-
 	return "gcc"
-
 }
 
 // ccLibraryHeaders implements a C/C++ header library rule.

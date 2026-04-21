@@ -25,6 +25,11 @@ type RuleRenderContext struct {
 	ArchSuffix string
 	CFlags     string
 	LdFlags    string
+	Sysroot    string
+	Ccache     string
+	Lto        string
+	GOOS       string
+	GOARCH     string
 }
 
 // DefaultRuleRenderContext returns a RuleRenderContext with default toolchain values.
@@ -90,8 +95,6 @@ func GetRule(name string) BuildRule {
 	return nil
 
 }
-
-
 
 // ApplyDefaults applies default properties from defaults modules to a target module.
 

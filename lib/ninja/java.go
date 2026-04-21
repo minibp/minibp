@@ -14,11 +14,17 @@ type javaLibrary struct{}
 func (r *javaLibrary) Name() string { return "java_library" }
 
 func (r *javaLibrary) NinjaRule(ctx RuleRenderContext) string {
+
 	return `rule javac_lib
+
  command = javac -d $outdir $in $flags
+
 rule jar_create
+
  command = jar cf $out -C $outdir .
+
 `
+
 }
 
 func (r *javaLibrary) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
@@ -54,62 +60,115 @@ func (r *javaLibrary) Desc(m *parser.Module, srcFile string) string {
 }
 
 // javaBinary implements a Java binary rule.
+
 type javaBinary struct{}
 
-func (r *javaBinary) Name() string { return "java_binary" }
+func (r *javaBinary) Name() string {
+
+	return "java_binary"
+
+}
 
 func (r *javaBinary) NinjaRule(ctx RuleRenderContext) string {
+
 	return `rule javac_bin
- command = javac -d $outdir $in $flags
-rule jar_create_executable
- command = jar cfe $out $main_class -C $outdir .
-`
+
+	 command = javac -d $outdir $in $flags
+
+	rule jar_create_executable
+
+	 command = jar cfe $out $main_class -C $outdir .
+
+	`
+
 }
 
 func (r *javaBinary) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
+
 	name := getName(m)
+
 	if name == "" {
+
 		return nil
+
 	}
+
 	return []string{fmt.Sprintf("%s.jar", name)}
+
 }
 
 func (r *javaBinary) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
+
 	name := getName(m)
+
 	srcs := getSrcs(m)
+
 	mainClass := GetStringProp(m, "main_class")
+
 	if name == "" || len(srcs) == 0 || mainClass == "" {
+
 		return ""
+
 	}
 
 	javaflags := getJavaflags(m)
+
 	out := r.Outputs(m, ctx)[0]
+
 	outdir := name + "_classes"
 
 	var edges strings.Builder
+
 	edges.WriteString(fmt.Sprintf("build %s.stamp: javac_bin %s\n outdir = %s\n flags = %s\n", name, strings.Join(srcs, " "), outdir, javaflags))
+
 	edges.WriteString(fmt.Sprintf("build %s: jar_create_executable %s.stamp\n outdir = %s\n main_class = %s\n", out, name, outdir, mainClass))
+
 	return edges.String()
+
 }
 
 func (r *javaBinary) Desc(m *parser.Module, srcFile string) string {
+
 	if srcFile == "" {
+
 		return "jar"
+
 	}
+
 	return "javac"
+
 }
 
 // javaLibraryStatic implements a static Java library rule.
+
 type javaLibraryStatic struct{}
 
-func (r *javaLibraryStatic) Name() string { return "java_library_static" }
+func (r *javaLibraryStatic) Name() string {
+
+	return "java_library_static"
+
+}
 
 func (r *javaLibraryStatic) NinjaRule(ctx RuleRenderContext) string {
+
 	return `rule javac_lib
+
+
+
  command = javac -d $outdir $in $flags
+
+
+
 rule jar_create
+
+
+
  command = jar cf $out -C $outdir .
+
+
+
 `
+
 }
 
 func (r *javaLibraryStatic) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
@@ -150,11 +209,17 @@ type javaLibraryHost struct{}
 func (r *javaLibraryHost) Name() string { return "java_library_host" }
 
 func (r *javaLibraryHost) NinjaRule(ctx RuleRenderContext) string {
+
 	return `rule javac_lib
+
  command = javac -d $outdir $in $flags
+
 rule jar_create
+
  command = jar cf $out -C $outdir .
+
 `
+
 }
 
 func (r *javaLibraryHost) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
@@ -195,11 +260,17 @@ type javaBinaryHost struct{}
 func (r *javaBinaryHost) Name() string { return "java_binary_host" }
 
 func (r *javaBinaryHost) NinjaRule(ctx RuleRenderContext) string {
+
 	return `rule javac_bin
+
  command = javac -d $outdir $in $flags
+
 rule jar_create_executable
+
  command = jar cfe $out $main_class -C $outdir .
+
 `
+
 }
 
 func (r *javaBinaryHost) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
@@ -241,11 +312,17 @@ type javaTest struct{}
 func (r *javaTest) Name() string { return "java_test" }
 
 func (r *javaTest) NinjaRule(ctx RuleRenderContext) string {
+
 	return `rule javac_test
+
  command = javac -d $outdir $in $flags
+
 rule jar_test
+
  command = jar cf $out -C $outdir .
+
 `
+
 }
 
 func (r *javaTest) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
@@ -286,13 +363,21 @@ type javaImport struct{}
 func (r *javaImport) Name() string { return "java_import" }
 
 func (r *javaImport) NinjaRule(ctx RuleRenderContext) string {
+
 	copyCmd := "cp $in $out"
+
 	if runtime.GOOS == "windows" {
+
 		copyCmd = "cmd /c copy $in $out"
+
 	}
+
 	return `rule java_import
+
  command = ` + copyCmd + `
+
 `
+
 }
 
 func (r *javaImport) Outputs(m *parser.Module, ctx RuleRenderContext) []string {

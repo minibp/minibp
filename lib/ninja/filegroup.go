@@ -15,13 +15,21 @@ type filegroup struct{}
 func (r *filegroup) Name() string { return "filegroup" }
 
 func (r *filegroup) NinjaRule(ctx RuleRenderContext) string {
+
 	copyCmd := "cp $in $out"
+
 	if runtime.GOOS == "windows" {
+
 		copyCmd = "cmd /c copy $in $out"
+
 	}
+
 	return `rule filegroup_copy
+
  command = ` + copyCmd + `
+
 `
+
 }
 
 func (r *filegroup) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
@@ -61,9 +69,13 @@ type filegroupStatic struct{}
 func (r *filegroupStatic) Name() string { return "filegroup_static" }
 
 func (r *filegroupStatic) NinjaRule(ctx RuleRenderContext) string {
+
 	return `rule filegroup_static
+
  command = cp $in $out
+
 `
+
 }
 
 func (r *filegroupStatic) Outputs(m *parser.Module, ctx RuleRenderContext) []string {

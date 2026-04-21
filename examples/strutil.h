@@ -2,6 +2,7 @@
 #define STRUTIL_H
 
 #include <string>
+#include <vector>
 
 namespace strutil {
 

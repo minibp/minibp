@@ -359,8 +359,8 @@ func TestGeneratorAppliesToolchainAndArchFlags(t *testing.T) {
 	if !strings.Contains(output, "command = clang -c $in -o $out $flags -MMD -MF $out.d") {
 		t.Fatalf("Expected configured compiler in compile rule, got: %s", output)
 	}
-	if !strings.Contains(output, "command = clang -o $out $in $flags") {
-		t.Fatalf("Expected configured compiler in link rule, got: %s", output)
+	if !strings.Contains(output, "command = ${CC} -o $out @$out.rsp $flags") {
+		t.Fatalf("Expected rspfile-based link rule, got: %s", output)
 	}
 	if !strings.Contains(output, "flags = --sysroot=/opt/sdk -DTOOLCHAIN -m64 -DMODULE -I.\n") {
 		t.Fatalf("Expected merged compile flags in edge, got: %s", output)

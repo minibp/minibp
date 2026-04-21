@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -38,16 +39,19 @@ type Generator struct {
 	workDir    string                    // Working directory for custom rules
 	toolchain  Toolchain                 // Compiler toolchain configuration
 	arch       string                    // Target architecture
+	multilib   []string                  // Multi-arch targets (e.g. ["arm64","x86_64"])
 }
 
 // Toolchain holds compiler/tool configuration for cross-compilation.
-// This allows targeting different architectures and using different compilers.
 type Toolchain struct {
 	CC      string   // C compiler command (e.g., gcc, clang)
 	CXX     string   // C++ compiler command (e.g., g++, clang++)
 	AR      string   // Static library archiver (e.g., ar, llvm-ar)
 	CFlags  []string // Extra global C/C++ compiler flags
 	LdFlags []string // Extra global linker flags
+	Sysroot string   // Target sysroot for cross-compilation
+	Ccache  string   // Path to ccache binary (empty if unavailable)
+	Lto     string   // Default LTO mode: "full", "thin", or ""
 }
 
 // NewGenerator creates a new Generator with the given graph and rules.
@@ -107,14 +111,43 @@ func (g *Generator) SetArch(arch string) {
 	g.arch = arch
 }
 
+// SetMultilib sets multiple target architectures for multi-arch builds.
+func (g *Generator) SetMultilib(archs []string) {
+	g.multilib = archs
+}
+
+// archsForModule returns the list of architectures to build for a given module.
+// For CC modules in multilib mode, it returns all multilib architectures.
+// Otherwise it returns the single configured architecture (may be "").
+func (g *Generator) archsForModule(m *parser.Module) []string {
+	if len(g.multilib) == 0 {
+		return []string{g.arch}
+	}
+	if !strings.HasPrefix(m.Type, "cc_") && !strings.HasPrefix(m.Type, "cpp_") {
+		return []string{g.arch}
+	}
+	return g.multilib
+}
+
 // DefaultToolchain returns a Toolchain with common GNU development tools.
-// This is used when no custom toolchain is specified.
+// It auto-detects ccache availability.
 func DefaultToolchain() Toolchain {
-	return Toolchain{
+	tc := Toolchain{
 		CC:  "gcc",
 		CXX: "g++",
 		AR:  "ar",
 	}
+	tc.Ccache = detectCcache()
+	return tc
+}
+
+// detectCcache searches for ccache in PATH.
+func detectCcache() string {
+	exe, err := exec.LookPath("ccache")
+	if err != nil {
+		return ""
+	}
+	return exe
 }
 
 // getRelativePath returns the relative path from the output directory to a file in the source directory.
@@ -268,27 +301,87 @@ func (g *Generator) Generate(w io.Writer) error {
 	writtenNinjaRules := make(map[string]bool)
 
 	for _, moduleType := range usedModuleTypes {
+
 		if rule, ok := g.rules[moduleType]; ok {
+
 			ruleDef := rule.NinjaRule(ctx)
+
 			if ruleDef == "" {
+
 				continue
+
 			}
-			parts := strings.Split(ruleDef, "rule ")
-			for i, part := range parts {
-				if i == 0 && part == "" {
+
+			// Split multiple rules in the same definition
+
+			// Each rule starts with "rule " prefix
+
+			lines := strings.Split(ruleDef, "\n")
+
+			var currentRuleName string
+
+			for i, line := range lines {
+
+				trimmed := strings.TrimSpace(line)
+
+				if trimmed == "" {
+
 					continue
+
 				}
-				if part == "" {
+
+				// Check if this is a rule definition line
+
+				if strings.HasPrefix(trimmed, "rule ") {
+
+					// Extract rule name
+
+					parts := strings.Fields(trimmed)
+
+					if len(parts) >= 2 {
+
+						currentRuleName = parts[1]
+
+						// Skip if already written
+
+						if writtenNinjaRules[currentRuleName] {
+
+							currentRuleName = ""
+
+							continue
+
+						}
+
+						writtenNinjaRules[currentRuleName] = true
+
+					}
+
+				}
+
+				// Skip rule name line if we're skipping this rule
+
+				if currentRuleName == "" {
+
 					continue
+
 				}
-				lines := strings.SplitN(part, "\n", 2)
-				ninjaRuleName := strings.TrimSpace(lines[0])
-				if ninjaRuleName != "" && !writtenNinjaRules[ninjaRuleName] {
-					writtenNinjaRules[ninjaRuleName] = true
-					fmt.Fprintf(w, "rule %s", strings.TrimRight(part, " \t"))
+
+				// Add leading space for attribute lines (Ninja syntax requires this)
+
+				if i > 0 && !strings.HasPrefix(trimmed, "rule ") {
+
+					fmt.Fprintf(w, " %s\n", trimmed)
+
+				} else {
+
+					fmt.Fprintf(w, "%s\n", trimmed)
+
 				}
+
 			}
+
 		}
+
 	}
 
 	levels, err := g.graph.TopoSort()
@@ -330,6 +423,23 @@ func (g *Generator) Generate(w io.Writer) error {
 						seen[dir] = true
 					}
 				}
+				for _, dir := range getLocalIncludeDirs(m) {
+					if !seen[dir] {
+						includes = append(includes, dir)
+						seen[dir] = true
+					}
+				}
+				relPrefix := g.getRelativePath("")
+				for _, dir := range getSystemIncludeDirs(m) {
+					flag := "-isystem " + dir
+					if relPrefix != "" && relPrefix != "." {
+						flag = "-isystem " + filepath.Join(relPrefix, dir)
+					}
+					if !seen[flag] {
+						includes = append(includes, flag)
+						seen[flag] = true
+					}
+				}
 			}
 
 			sourceDir := g.sourceDir
@@ -342,44 +452,52 @@ func (g *Generator) Generate(w io.Writer) error {
 
 			}
 
-			edgeDef := rule.NinjaEdge(m, ctx)
-
-			if edgeDef == "" && m.Type != "cc_library_headers" {
-
-				continue
-
-			}
-
-			if edgeDef != "" {
-				if strings.HasPrefix(m.Type, "java_") {
-					edgeDef = g.addJavaDepsToEdge(m, edgeDef)
+			archs := g.archsForModule(m)
+			for _, arch := range archs {
+				archCtx := ctx
+				if arch != g.arch {
+					archCtx = g.ruleRenderContextForArch(arch)
 				}
-				edgeDef = g.addIncludesToEdge(edgeDef, includes)
-			}
 
-			for _, out := range collectBuildOutputs(edgeDef) {
-				if !seenCleanOutputs[out] {
-					seenCleanOutputs[out] = true
-					allOutputs = append(allOutputs, out)
-				}
-			}
+				edgeDef := rule.NinjaEdge(m, archCtx)
 
-			srcs := getSrcs(m)
-			if len(srcs) == 0 {
-				desc := rule.Desc(m, "")
-				if desc != "" {
-					nw.Desc(sourceDir, moduleName, desc, "")
+				if edgeDef == "" && m.Type != "cc_library_headers" {
+
+					continue
+
 				}
-			} else {
-				for _, src := range srcs {
-					desc := rule.Desc(m, src)
-					if desc != "" {
-						nw.Desc(sourceDir, moduleName, desc, src)
+
+				if edgeDef != "" {
+					if strings.HasPrefix(m.Type, "java_") {
+						edgeDef = g.addJavaDepsToEdge(m, edgeDef)
+					}
+					edgeDef = g.addIncludesToEdge(edgeDef, includes)
+				}
+
+				for _, out := range collectBuildOutputs(edgeDef) {
+					if !seenCleanOutputs[out] {
+						seenCleanOutputs[out] = true
+						allOutputs = append(allOutputs, out)
 					}
 				}
-			}
 
-			fmt.Fprint(w, g.adjustPaths(edgeDef))
+				srcs := getSrcs(m)
+				if len(srcs) == 0 {
+					desc := rule.Desc(m, "")
+					if desc != "" {
+						nw.Desc(sourceDir, moduleName, desc, "")
+					}
+				} else {
+					for _, src := range srcs {
+						desc := rule.Desc(m, src)
+						if desc != "" {
+							nw.Desc(sourceDir, moduleName, desc, src)
+						}
+					}
+				}
+
+				fmt.Fprint(w, g.adjustPaths(edgeDef))
+			}
 		}
 	}
 
@@ -398,32 +516,43 @@ func (g *Generator) Generate(w io.Writer) error {
 			if !ok {
 				continue
 			}
-			edgeDef := rule.NinjaEdge(m, ctx)
-			if edgeDef == "" && m.Type != "cc_library_headers" {
-				continue
-			}
-			if edgeDef == "" {
-				continue
-			}
-			outputs := rule.Outputs(m, ctx)
-			if len(outputs) == 0 {
-				continue
-			}
-			skip := false
-			for _, out := range outputs {
-				if out == moduleName {
-					skip = true
-					break
+			archs := g.archsForModule(m)
+			for _, arch := range archs {
+				archCtx := ctx
+				if arch != g.arch {
+					archCtx = g.ruleRenderContextForArch(arch)
 				}
+				edgeDef := rule.NinjaEdge(m, archCtx)
+				if edgeDef == "" && m.Type != "cc_library_headers" {
+					continue
+				}
+				if edgeDef == "" {
+					continue
+				}
+				outputs := rule.Outputs(m, archCtx)
+				if len(outputs) == 0 {
+					continue
+				}
+				skip := false
+				for _, out := range outputs {
+					if out == moduleName {
+						skip = true
+						break
+					}
+				}
+				if skip {
+					continue
+				}
+				phonyName := moduleName
+				if arch != "" && arch != g.arch && len(archs) > 1 {
+					phonyName = moduleName + "_" + arch
+				}
+				escapedOutputs := make([]string, 0, len(outputs))
+				for _, out := range outputs {
+					escapedOutputs = append(escapedOutputs, g.adjustBuildPath(out, true))
+				}
+				fmt.Fprintf(w, "build %s: phony %s\n", ninjaEscapePath(phonyName), strings.Join(escapedOutputs, " "))
 			}
-			if skip {
-				continue
-			}
-			escapedOutputs := make([]string, 0, len(outputs))
-			for _, out := range outputs {
-				escapedOutputs = append(escapedOutputs, g.adjustBuildPath(out, true))
-			}
-			fmt.Fprintf(w, "build %s: phony %s\n", ninjaEscapePath(moduleName), strings.Join(escapedOutputs, " "))
 		}
 	}
 
@@ -446,6 +575,10 @@ func archFlags(arch string) (cflags []string, ldflags []string) {
 }
 
 func (g *Generator) ruleRenderContext() RuleRenderContext {
+	return g.ruleRenderContextForArch(g.arch)
+}
+
+func (g *Generator) ruleRenderContextForArch(arch string) RuleRenderContext {
 	tc := g.toolchain
 	if tc.CC == "" {
 		tc.CC = "gcc"
@@ -456,7 +589,7 @@ func (g *Generator) ruleRenderContext() RuleRenderContext {
 	if tc.AR == "" {
 		tc.AR = "ar"
 	}
-	archCFlags, archLdFlags := archFlags(g.arch)
+	archCFlags, archLdFlags := archFlags(arch)
 	tc.CFlags = append(append([]string{}, tc.CFlags...), archCFlags...)
 	tc.LdFlags = append(append([]string{}, tc.LdFlags...), archLdFlags...)
 
@@ -466,8 +599,16 @@ func (g *Generator) ruleRenderContext() RuleRenderContext {
 	ctx.AR = tc.AR
 	ctx.CFlags = strings.Join(tc.CFlags, " ")
 	ctx.LdFlags = strings.Join(tc.LdFlags, " ")
-	if g.arch != "" {
-		ctx.ArchSuffix = "_" + g.arch
+	ctx.Sysroot = tc.Sysroot
+	ctx.Ccache = tc.Ccache
+	ctx.Lto = tc.Lto
+	if arch != "" {
+		ctx.ArchSuffix = "_" + arch
+	}
+	if ctx.Sysroot != "" {
+		sysrootFlag := "--sysroot=" + ctx.Sysroot
+		ctx.CFlags = strings.TrimSpace(ctx.CFlags + " " + sysrootFlag)
+		ctx.LdFlags = strings.TrimSpace(ctx.LdFlags + " " + sysrootFlag)
 	}
 	return ctx
 }
@@ -618,22 +759,27 @@ func (g *Generator) addIncludesToEdge(edge string, includes []string) string {
 	includeFlags := ""
 	relPrefix := g.getRelativePath("")
 	for _, inc := range includes {
+		if strings.HasPrefix(inc, "-isystem") {
+			includeFlags += " " + inc
+			continue
+		}
 		if relPrefix != "" && relPrefix != "." {
 			inc = filepath.Join(relPrefix, inc)
 		}
 		includeFlags += " -I" + inc
 	}
 
-	// Add to flags variable in edge
 	lines := strings.Split(edge, "\n")
 	compileFlags := false
 	for i, line := range lines {
 		if strings.HasPrefix(line, "build ") {
-			compileFlags = strings.Contains(line, ": cc_compile ") || strings.Contains(line, ": cpp_compile ")
+			compileFlags = strings.Contains(line, ": cc_compile ") ||
+				strings.Contains(line, ": cpp_compile ") ||
+				strings.Contains(line, ": cc_compile_lto ") ||
+				strings.Contains(line, ": cpp_compile_lto ")
 			continue
 		}
 		if compileFlags && strings.Contains(line, "flags =") && !strings.Contains(line, "#") {
-			// Append includes to compile flags without affecting link/archive steps.
 			lines[i] = line + includeFlags
 		}
 	}
