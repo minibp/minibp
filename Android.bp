@@ -76,7 +76,7 @@ go_library {
 // Ninja generator library
 go_library {
   name: "libninja",
-  srcs: [
+srcs: [
     "lib/ninja/gen.go",
     "lib/ninja/rules.go",
     "lib/ninja/writer.go",
@@ -86,7 +86,8 @@ go_library {
     "lib/ninja/filegroup.go",
     "lib/ninja/custom.go",
     "lib/ninja/defaults.go",
-  ],
+    "lib/ninja/helpers.go",
+],
   deps: [
     ":libparser",
     ":libdag",
