@@ -252,8 +252,17 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if err := expandGlobsInModule(mod, srcDir); err != nil {
 			return fmt.Errorf("error expanding globs for module %s: %w", name, err)
 		}
+
+		// Filter by host_supported / device_supported
+		if !isModuleEnabledForTarget(mod, *hostFlag) {
+			continue
+		}
+
 		modules[name] = mod
 	}
+
+	// Build namespace map for soong_namespace resolution
+	namespaces := buildNamespaceMap(modules)
 
 	// Build dependency graph from modules
 	graph := NewGraph()
@@ -265,17 +274,17 @@ func run(args []string, stdout, stderr io.Writer) error {
 	for name, mod := range modules {
 		deps := getListPropEval(mod, "deps", eval)
 		for _, dep := range deps {
-			depName := strings.TrimPrefix(dep, ":")
+			depName := resolveModuleRef(dep, mod, modules, namespaces)
 			graph.AddEdge(name, depName)
 		}
 		sharedLibs := getListPropEval(mod, "shared_libs", eval)
 		for _, dep := range sharedLibs {
-			depName := strings.TrimPrefix(dep, ":")
+			depName := resolveModuleRef(dep, mod, modules, namespaces)
 			graph.AddEdge(name, depName)
 		}
 		headerLibs := getListPropEval(mod, "header_libs", eval)
 		for _, dep := range headerLibs {
-			depName := strings.TrimPrefix(dep, ":")
+			depName := resolveModuleRef(dep, mod, modules, namespaces)
 			graph.AddEdge(name, depName)
 		}
 	}
@@ -562,6 +571,45 @@ func getListPropEval(m *parser.Module, name string, eval *parser.Evaluator) []st
 	return nil
 }
 
+// isModuleEnabledForTarget checks whether a module should be included
+// based on host_supported/device_supported properties and the current build target.
+// If neither property is set, the module is included by default.
+func isModuleEnabledForTarget(m *parser.Module, hostBuild bool) bool {
+	hostSupported := getBoolPropEval(m, "host_supported", nil)
+	deviceSupported := getBoolPropEval(m, "device_supported", nil)
+
+	// If neither property is set, include the module
+	if !hostSupported && !deviceSupported {
+		return true
+	}
+
+	if hostBuild {
+		return hostSupported
+	}
+	return deviceSupported
+}
+
+// getBoolPropEval retrieves a boolean property from a module.
+func getBoolPropEval(m *parser.Module, name string, eval *parser.Evaluator) bool {
+	if m.Map == nil {
+		return false
+	}
+	for _, prop := range m.Map.Properties {
+		if prop.Name == name {
+			if b, ok := prop.Value.(*parser.Bool); ok {
+				return b.Value
+			}
+			if eval != nil {
+				val := eval.Eval(prop.Value)
+				if b, ok := val.(bool); ok {
+					return b
+				}
+			}
+		}
+	}
+	return false
+}
+
 // mergeVariantProps merges architecture-specific, host-specific, and target-specific properties
 // into a module's base property map. It allows modules to define different configurations
 // for different build targets (e.g., arm64 vs x86_64) or for host vs target builds.
@@ -785,4 +833,58 @@ func matchRecursiveParts(patternParts, pathParts []string) bool {
 
 	// Continue with remaining parts
 	return matchRecursiveParts(patternParts[1:], pathParts[1:])
+}
+
+// namespaceInfo holds namespace metadata for soong_namespace resolution.
+type namespaceInfo struct {
+	imports []string // List of namespace paths this namespace imports from
+}
+
+// buildNamespaceMap builds a map of namespace name -> namespaceInfo from all
+// soong_namespace modules. This is used for dependency resolution across namespaces.
+func buildNamespaceMap(modules map[string]*parser.Module) map[string]*namespaceInfo {
+	result := make(map[string]*namespaceInfo)
+	for _, mod := range modules {
+		if mod.Type != "soong_namespace" || mod.Map == nil {
+			continue
+		}
+		name := getStringPropEval(mod, "name", nil)
+		if name == "" {
+			continue
+		}
+		ns := &namespaceInfo{}
+		for _, prop := range mod.Map.Properties {
+			if prop.Name == "imports" {
+				if l, ok := prop.Value.(*parser.List); ok {
+					for _, v := range l.Values {
+						if s, ok := v.(*parser.String); ok {
+							ns.imports = append(ns.imports, s.Value)
+						}
+					}
+				}
+			}
+		}
+		result[name] = ns
+	}
+	return result
+}
+
+// resolveModuleRef resolves a module reference string (e.g., ":libfoo" or
+// "//namespace:libfoo") to a plain module name. For global references
+// (//namespace:name), it verifies the namespace exists. For local references
+// (:name), it falls back to simple name lookup.
+func resolveModuleRef(ref string, fromMod *parser.Module, modules map[string]*parser.Module, namespaces map[string]*namespaceInfo) string {
+	ref = strings.TrimPrefix(ref, ":")
+	// Check for global reference: //namespace:module
+	if strings.HasPrefix(ref, "//") {
+		sepIdx := strings.Index(ref, ":")
+		if sepIdx >= 0 {
+			nsName := ref[2:sepIdx]
+			modName := ref[sepIdx+1:]
+			if _, ok := namespaces[nsName]; ok {
+				return modName
+			}
+		}
+	}
+	return ref
 }

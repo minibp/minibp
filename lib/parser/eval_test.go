@@ -678,3 +678,275 @@ func findProp(m *Map, name string) *Property {
 	}
 	return nil
 }
+
+func TestEvaluatorSelectMultiVariable(t *testing.T) {
+	input := `cc_binary {
+	name: "test",
+	srcs: select((arch(), os()), {
+		("arm", "linux"): ["arm_linux.c"],
+		default: ["generic.c"],
+	}),
+}`
+	p := NewParser(strings.NewReader(input), "test.bp")
+	file, errs := p.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("Parse errors: %v", errs)
+	}
+	mod := file.Defs[0].(*Module)
+	srcsProp := findProp(mod.Map, "srcs")
+	sel, ok := srcsProp.Value.(*Select)
+	if !ok {
+		t.Fatalf("Expected *Select, got %T", srcsProp.Value)
+	}
+	if len(sel.Conditions) != 2 {
+		t.Fatalf("Expected 2 conditions, got %d", len(sel.Conditions))
+	}
+	eval := NewEvaluator()
+	eval.SetConfig("arch", "arm")
+	eval.SetConfig("os", "linux")
+	result := eval.Eval(sel)
+	list, ok := result.([]interface{})
+	if !ok {
+		t.Fatalf("Expected []interface{}, got %T", result)
+	}
+	if len(list) != 1 || list[0] != "arm_linux.c" {
+		t.Errorf("Expected [arm_linux.c], got %v", list)
+	}
+}
+
+func TestEvaluatorSelectMultiVariableDefault(t *testing.T) {
+	input := `cc_binary {
+	name: "test",
+	srcs: select((arch(), os()), {
+		("arm", "linux"): ["arm_linux.c"],
+		default: ["generic.c"],
+	}),
+}`
+	p := NewParser(strings.NewReader(input), "test.bp")
+	file, errs := p.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("Parse errors: %v", errs)
+	}
+	mod := file.Defs[0].(*Module)
+	sel := findProp(mod.Map, "srcs").Value.(*Select)
+	eval := NewEvaluator()
+	eval.SetConfig("arch", "x86_64")
+	eval.SetConfig("os", "linux")
+	result := eval.Eval(sel)
+	list, ok := result.([]interface{})
+	if !ok {
+		t.Fatalf("Expected []interface{}, got %T", result)
+	}
+	if len(list) != 1 || list[0] != "generic.c" {
+		t.Errorf("Expected [generic.c] for default, got %v", list)
+	}
+}
+
+func TestEvaluatorSelectUnset(t *testing.T) {
+	input := `cc_binary {
+	name: "test",
+	enabled: select(os(), {
+		"darwin": false,
+		default: unset,
+	}),
+}`
+	p := NewParser(strings.NewReader(input), "test.bp")
+	file, errs := p.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("Parse errors: %v", errs)
+	}
+	mod := file.Defs[0].(*Module)
+	sel := findProp(mod.Map, "enabled").Value.(*Select)
+
+	eval := NewEvaluator()
+	eval.SetConfig("os", "darwin")
+	result := eval.Eval(sel)
+	if b, ok := result.(bool); !ok || b != false {
+		t.Errorf("Expected false for darwin, got %v", result)
+	}
+
+	eval2 := NewEvaluator()
+	eval2.SetConfig("os", "linux")
+	result2 := eval2.Eval(sel)
+	if result2 != UnsetSentinel {
+		t.Errorf("Expected UnsetSentinel for linux, got %v", result2)
+	}
+}
+
+func TestEvaluatorSelectAnyBinding(t *testing.T) {
+	input := `cc_binary {
+	name: "test",
+	cflags: select(os(), {
+		"linux": ["-DLINUX"],
+		any @ my_os: ["-D" + my_os],
+		default: ["-DGENERIC"],
+	}),
+}`
+	p := NewParser(strings.NewReader(input), "test.bp")
+	file, errs := p.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("Parse errors: %v", errs)
+	}
+	mod := file.Defs[0].(*Module)
+	sel := findProp(mod.Map, "cflags").Value.(*Select)
+
+	eval := NewEvaluator()
+	eval.SetConfig("os", "freebsd")
+	result := eval.Eval(sel)
+	list, ok := result.([]interface{})
+	if !ok {
+		t.Fatalf("Expected []interface{}, got %T", result)
+	}
+	if len(list) != 1 {
+		t.Fatalf("Expected 1 item, got %d", len(list))
+	}
+	s, ok := list[0].(string)
+	if !ok || s != "-Dfreebsd" {
+		t.Errorf("Expected '-Dfreebsd' from any @ my_os binding, got '%s'", s)
+	}
+}
+
+func TestEvaluatorListConcatenation(t *testing.T) {
+	result := evalOperator([]interface{}{"a", "b"}, []interface{}{"c"}, '+')
+	list, ok := result.([]interface{})
+	if !ok {
+		t.Fatalf("Expected []interface{}, got %T", result)
+	}
+	if len(list) != 3 || list[0] != "a" || list[1] != "b" || list[2] != "c" {
+		t.Errorf("Expected [a b c], got %v", list)
+	}
+}
+
+func TestEvaluatorMapMerge(t *testing.T) {
+	left := map[string]interface{}{
+		"a": []interface{}{"1"},
+		"b": "base",
+	}
+	right := map[string]interface{}{
+		"a": []interface{}{"2"},
+		"c": "new",
+	}
+	result := evalOperator(left, right, '+')
+	merged, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Expected map[string]interface{}, got %T", result)
+	}
+	listA, ok := merged["a"].([]interface{})
+	if !ok || len(listA) != 2 || listA[0] != "1" || listA[1] != "2" {
+		t.Errorf("Expected merged list [1 2], got %v", merged["a"])
+	}
+	if merged["b"] != "base" {
+		t.Errorf("Expected 'base' for key b, got %v", merged["b"])
+	}
+	if merged["c"] != "new" {
+		t.Errorf("Expected 'new' for key c, got %v", merged["c"])
+	}
+}
+
+func TestEvaluatorSelectSoongConfigVariable(t *testing.T) {
+	input := `cc_binary {
+	name: "test",
+	cflags: select(soong_config_variable("acme", "board"), {
+		"soc_a": ["-DSOC_A"],
+		default: ["-DGENERIC"],
+	}),
+}`
+	p := NewParser(strings.NewReader(input), "test.bp")
+	file, errs := p.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("Parse errors: %v", errs)
+	}
+	mod := file.Defs[0].(*Module)
+	sel := findProp(mod.Map, "cflags").Value.(*Select)
+
+	eval := NewEvaluator()
+	eval.SetConfig("acme.board", "soc_a")
+	result := eval.Eval(sel)
+	list, ok := result.([]interface{})
+	if !ok {
+		t.Fatalf("Expected []interface{}, got %T", result)
+	}
+	if len(list) != 1 || list[0] != "-DSOC_A" {
+		t.Errorf("Expected [-DSOC_A] for soong_config_variable match, got %v", list)
+	}
+}
+
+func TestEvaluatorSelectNoDefaultStrictError(t *testing.T) {
+	input := `cc_binary {
+	name: "test",
+	srcs: select(arch, {
+		"arm": ["arm.c"],
+	}),
+}`
+	p := NewParser(strings.NewReader(input), "test.bp")
+	file, errs := p.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("Parse errors: %v", errs)
+	}
+	mod := file.Defs[0].(*Module)
+	sel := findProp(mod.Map, "srcs").Value.(*Select)
+
+	eval := NewEvaluator()
+	eval.SetConfig("arch", "x86_64")
+	eval.Eval(sel)
+	if len(eval.SelectErrors()) == 0 {
+		t.Error("Expected select error for no matching case and no default in strict mode")
+	}
+}
+
+func TestEvaluatorSelectPlusConcatenation(t *testing.T) {
+	input := `cc_binary {
+	name: "test",
+	cflags: select(os(), {
+		"linux_glibc": "penguin",
+		default: "unknown",
+	}) + "-" + select(arch, {
+		"arm": "arm",
+		default: "generic",
+	}),
+}`
+	p := NewParser(strings.NewReader(input), "test.bp")
+	file, errs := p.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("Parse errors: %v", errs)
+	}
+	mod := file.Defs[0].(*Module)
+	cflagsProp := findProp(mod.Map, "cflags")
+	eval := NewEvaluator()
+	eval.SetConfig("os", "linux_glibc")
+	eval.SetConfig("arch", "arm")
+	result := eval.Eval(cflagsProp.Value)
+	s, ok := result.(string)
+	if !ok {
+		t.Fatalf("Expected string, got %T", result)
+	}
+	if s != "penguin-arm" {
+		t.Errorf("Expected 'penguin-arm', got '%s'", s)
+	}
+}
+
+func TestParseUnsetInSelect(t *testing.T) {
+	input := `cc_binary {
+	name: "test",
+	enabled: select(os(), {
+		"darwin": false,
+		default: unset,
+	}),
+}`
+	p := NewParser(strings.NewReader(input), "test.bp")
+	file, errs := p.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("Parse errors: %v", errs)
+	}
+	mod := file.Defs[0].(*Module)
+	sel := findProp(mod.Map, "enabled").Value.(*Select)
+	if len(sel.Cases) != 2 {
+		t.Fatalf("Expected 2 cases, got %d", len(sel.Cases))
+	}
+	// The second case is "default: unset" — the VALUE is unset, not the pattern
+	unsetVal, ok := sel.Cases[1].Value.(*Unset)
+	if !ok {
+		t.Fatalf("Expected second case VALUE to be *Unset, got %T", sel.Cases[1].Value)
+	}
+	_ = unsetVal
+}

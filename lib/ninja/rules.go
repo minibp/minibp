@@ -69,12 +69,19 @@ func GetAllRules() []BuildRule {
 		&defaults{},
 		&packageModule{},
 		&soongNamespace{},
+		&phonyRule{},
+		&ccTestRule{},
 
 		// Other rules
 		&filegroup{},
 		&customRule{},
 		&protoLibraryRule{},
 		&protoGenRule{},
+
+		// Shell/Python rules
+		&shBinaryHostRule{},
+		&pythonBinaryHostRule{},
+		&pythonTestHostRule{},
 	}
 }
 
@@ -139,89 +146,57 @@ func GetRule(name string) BuildRule {
 //	}
 
 func ApplyDefaults(m *parser.Module, modules map[string]*parser.Module) {
-
 	if m.Map == nil {
-
 		return
-
 	}
-
-	// Get the list of default module names
-
 	defaultNames := GetListProp(m, "defaults")
-
 	if len(defaultNames) == 0 {
-
 		return
-
 	}
-
-	// Collect properties from each defaults module
-
 	for _, defaultName := range defaultNames {
-
 		defaultName = strings.TrimPrefix(defaultName, ":")
-
 		defaultMod, ok := modules[defaultName]
-
 		if !ok || defaultMod == nil {
-
 			continue
-
 		}
-
-		// Verify this is actually a defaults module
-
 		if defaultMod.Type != "defaults" {
-
 			continue
-
 		}
-
-		// Merge properties from the defaults module
-
 		if defaultMod.Map != nil {
-
 			for _, prop := range defaultMod.Map.Properties {
-
-				// Skip the 'name' and 'defaults' properties
-
 				if prop.Name == "name" || prop.Name == "defaults" {
-
 					continue
-
 				}
-
-				// Check if target module already has this property
-
-				hasProp := false
-
-				for _, targetProp := range m.Map.Properties {
-
+				// Look for existing property in target module
+				found := false
+				for i, targetProp := range m.Map.Properties {
 					if targetProp.Name == prop.Name {
-
-						hasProp = true
-
+						found = true
+						// Additive merge for lists: append default items to existing list
+						if defaultList, ok := prop.Value.(*parser.List); ok {
+							if targetList, ok := targetProp.Value.(*parser.List); ok {
+								merged := make([]parser.Expression, len(targetList.Values))
+								copy(merged, targetList.Values)
+								for _, v := range defaultList.Values {
+									merged = append(merged, v)
+								}
+								m.Map.Properties[i].Value = &parser.List{
+									Values:    merged,
+									LBracePos: targetList.LBracePos,
+									RBracePos: targetList.RBracePos,
+								}
+							}
+						}
+						// For non-list properties, target takes precedence (do nothing)
 						break
-
 					}
-
 				}
-
-				// Add the property if not already present
-
-				if !hasProp {
-
+				if !found {
 					m.Map.Properties = append(m.Map.Properties, prop)
-
 				}
-
 			}
-
 		}
-
 	}
-
 }
 
 // GetDefaultVisibility retrieves the default_visibility from a package module.
@@ -300,13 +275,17 @@ type ModuleReference struct {
 // Returns nil if the string is not a valid module reference.
 
 func ParseModuleReference(s string) *ModuleReference {
-
 	s = strings.TrimSpace(s)
 
+	if strings.HasPrefix(s, "//") && strings.Contains(s, ":") {
+		ref := &ModuleReference{IsModuleRef: true}
+		sepIdx := strings.Index(s, ":")
+		ref.ModuleName = s[sepIdx+1:]
+		return ref
+	}
+
 	if !strings.HasPrefix(s, ":") {
-
 		return nil
-
 	}
 
 	ref := &ModuleReference{IsModuleRef: true}
@@ -314,7 +293,6 @@ func ParseModuleReference(s string) *ModuleReference {
 	s = s[1:] // Remove leading ":"
 
 	// Check for tag syntax: {tag}
-
 	if strings.Contains(s, "{") && strings.HasSuffix(s, "}") {
 
 		parts := strings.SplitN(s, "{", 2)

@@ -594,3 +594,63 @@ func (r *ccLibraryHeaders) Outputs(m *parser.Module, ctx RuleRenderContext) []st
 }
 func (r *ccLibraryHeaders) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string { return "" }
 func (r *ccLibraryHeaders) Desc(m *parser.Module, srcFile string) string             { return "" }
+
+func ccTestEdge(m *parser.Module, ctx RuleRenderContext) string {
+	name := getName(m)
+	srcs := getSrcs(m)
+	if name == "" || len(srcs) == 0 {
+		return ""
+	}
+	cflags := joinFlags(getCflags(m), ctx.CFlags)
+	linkFlags := joinFlags(getLdflags(m), ctx.LdFlags)
+	moduleLto := getLto(m)
+	if moduleLto == "" {
+		moduleLto = ctx.Lto
+	}
+	compileRule := "cc_compile"
+	ltoCompileFlags, ltoLinkFlags := ltoFlags(moduleLto)
+	if moduleLto != "" {
+		compileRule = "cc_compile_lto"
+		cflags = joinFlags(cflags, ltoCompileFlags)
+		linkFlags = joinFlags(linkFlags, ltoLinkFlags)
+	}
+	compilerType := detectCompilerType(srcs)
+	compiler := ccCompilerCmd(ctx, compilerType)
+	if compilerType == "cpp" {
+		cflags = joinFlags(getCppflags(m), cflags)
+	}
+	deps := GetListProp(m, "deps")
+	sharedLibs := GetListProp(m, "shared_libs")
+	var libFiles []string
+	for _, dep := range deps {
+		depName := strings.TrimPrefix(dep, ":")
+		libFiles = append(libFiles, staticLibOutputName(depName, ctx.ArchSuffix))
+	}
+	for _, dep := range sharedLibs {
+		depName := strings.TrimPrefix(dep, ":")
+		libFiles = append(libFiles, sharedLibOutputName(depName, ctx.ArchSuffix))
+		linkFlags = joinFlags(linkFlags, "-l"+depName)
+	}
+	var edges strings.Builder
+	var objFiles []string
+	for _, src := range srcs {
+		obj := objectOutputName(name, src)
+		objFiles = append(objFiles, obj)
+		edges.WriteString(fmt.Sprintf("build %s: %s %s\n flags = %s\n CC = %s\n", obj, compileRule, src, cflags, compiler))
+	}
+	out := name + ".test" + ctx.ArchSuffix
+	allInputs := append(objFiles, libFiles...)
+	linkRule := "cc_link"
+	if moduleLto != "" {
+		linkRule = "cc_link_lto"
+	}
+	edges.WriteString(fmt.Sprintf("build %s: %s %s\n flags = %s\n CC = %s\n", ninjaEscapePath(out), linkRule, strings.Join(allInputs, " "), linkFlags, compiler))
+	if moduleLto == "thin" {
+		for _, src := range srcs {
+			obj := objectOutputName(name, src)
+			codegen := obj + ".thinlto.o"
+			edges.WriteString(fmt.Sprintf("build %s: thinlto_codegen %s\n", codegen, obj))
+		}
+	}
+	return edges.String()
+}

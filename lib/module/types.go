@@ -655,6 +655,12 @@ func registerBuiltInModuleTypes() {
 	Register("filegroup", &CustomFactory{})
 	Register("proto_library", &ProtoLibraryFactory{})
 	Register("proto_gen", &ProtoGenFactory{})
+	Register("cc_library_headers", &CustomFactory{})
+	Register("cc_test", &CCBinaryFactory{})
+	Register("phony", &CustomFactory{})
+	Register("sh_binary_host", &CustomFactory{})
+	Register("python_binary_host", &CustomFactory{})
+	Register("python_test_host", &CustomFactory{})
 	Register("custom", &CustomFactory{})
 }
 

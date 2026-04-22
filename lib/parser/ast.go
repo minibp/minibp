@@ -227,10 +227,21 @@ type SelectCase struct {
 
 // SelectPattern represents a single pattern in a select case.
 // A pattern is compared against the condition value to determine if this case matches.
+// It also supports the "any @ var" binding syntax for wildcard pattern matching.
 type SelectPattern struct {
-	Value   Expression // The pattern expression (string, int, bool, variable)
-	Binding Variable   // Optional binding (for future use in pattern matching)
+	Value   Expression // The pattern expression (string, int, bool, variable, unset)
+	IsAny   bool       // True if this is an "any" wildcard pattern
+	Binding string     // Variable name to bind the matched value to (for "any @ var" syntax)
 }
+
+// Unset represents the unset keyword in a select statement.
+// When a select branch evaluates to Unset, the property is treated as if it was never assigned.
+type Unset struct {
+	KeywordPos scanner.Position // Position of the "unset" keyword
+}
+
+func (u *Unset) Pos() scanner.Position { return u.KeywordPos }
+func (u *Unset) String() string        { return "unset" }
 
 // File represents a parsed Blueprint file.
 // It contains a list of definitions (modules and assignments).

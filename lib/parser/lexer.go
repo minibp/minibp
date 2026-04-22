@@ -32,9 +32,11 @@ const (
 	RBRACKET // ]  Right bracket
 	COLON    // :  Colon (property separator)
 	COMMA    // ,  Comma (list/property separator)
-	PLUS     // +  Plus (concatenation operator)
-	ASSIGN   // =  Equals (assignment operator)
+	PLUS     // + Plus (concatenation operator)
+	ASSIGN   // = Equals (assignment operator)
 	PLUSEQ   // += Plus-equals (concatenation assignment)
+	UNSET    // unset keyword
+	AT       // @ At sign (for any @ var binding in select)
 )
 
 // Token represents a lexical token with its type, literal value, and source position.
@@ -155,6 +157,10 @@ func (l *Lexer) NextToken() Token {
 		tok.Type = ASSIGN
 		tok.Literal = "="
 		l.next()
+	case '@':
+		tok.Type = AT
+		tok.Literal = "@"
+		l.next()
 	case scanner.Comment:
 		// Skip comments and get next token
 		l.next()
@@ -169,10 +175,12 @@ func (l *Lexer) NextToken() Token {
 		l.next()
 	case scanner.Ident:
 		tok.Literal = l.scanner.TokenText()
-		// Check for boolean literals
-		if tok.Literal == "true" || tok.Literal == "false" {
+		switch tok.Literal {
+		case "true", "false":
 			tok.Type = BOOL
-		} else {
+		case "unset":
+			tok.Type = UNSET
+		default:
 			tok.Type = IDENT
 		}
 		l.next()
@@ -271,6 +279,10 @@ func (t TokenType) String() string {
 		return "ASSIGN"
 	case PLUSEQ:
 		return "PLUSEQ"
+	case UNSET:
+		return "UNSET"
+	case AT:
+		return "AT"
 	default:
 		return fmt.Sprintf("Token(%d)", t)
 	}

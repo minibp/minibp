@@ -393,6 +393,10 @@ func (p *Parser) parsePrimary() (Expression, error) {
 			return p.parseSelect()
 		}
 		return p.parseVariable()
+	case UNSET:
+		pos := p.curToken.Pos
+		p.nextToken()
+		return &Unset{KeywordPos: pos}, nil
 	default:
 		return nil, fmt.Errorf("%s: unexpected token %s in expression", p.curToken.Pos, p.curToken.Type)
 	}
@@ -559,19 +563,35 @@ func (p *Parser) parseSelect() (*Select, error) {
 	}
 	p.nextToken()
 
-	// Parse conditions (variable or first case condition)
 	conditions := []ConfigurableCondition{}
-	if p.curToken.Type != LBRACE {
-		// First argument is conditions variable/expression
+
+	// Check for tuple condition: select((arch(), os()), {...})
+	if p.curToken.Type == LPAREN {
+		p.nextToken()
+		for p.curToken.Type != EOF && p.curToken.Type != RPAREN {
+			cond, err := p.parseConfigurableCondition()
+			if err != nil {
+				return nil, err
+			}
+			conditions = append(conditions, cond)
+			if p.curToken.Type == COMMA {
+				p.nextToken()
+			}
+		}
+		if p.curToken.Type != RPAREN {
+			return nil, fmt.Errorf("%s: expected ')' after tuple conditions", p.curToken.Pos)
+		}
+		p.nextToken()
+	} else {
 		cond, err := p.parseConfigurableCondition()
 		if err != nil {
 			return nil, err
 		}
 		conditions = append(conditions, cond)
+	}
 
-		if p.curToken.Type == COMMA {
-			p.nextToken()
-		}
+	if p.curToken.Type == COMMA {
+		p.nextToken()
 	}
 
 	// Parse cases: { case_pattern: value, ... }
@@ -583,13 +603,12 @@ func (p *Parser) parseSelect() (*Select, error) {
 
 	cases := []SelectCase{}
 	for p.curToken.Type != EOF && p.curToken.Type != RBRACE {
-		caseItem, err := p.parseSelectCase()
+		caseItem, err := p.parseSelectCase(len(conditions) > 1)
 		if err != nil {
 			return nil, err
 		}
 		cases = append(cases, caseItem)
 
-		// Optional comma after case
 		if p.curToken.Type == COMMA {
 			p.nextToken()
 		}
@@ -601,7 +620,6 @@ func (p *Parser) parseSelect() (*Select, error) {
 	rbracePos := p.curToken.Pos
 	p.nextToken()
 
-	// Expect closing paren
 	if p.curToken.Type != RPAREN {
 		return nil, fmt.Errorf("%s: expected ')' after select cases", p.curToken.Pos)
 	}
@@ -663,7 +681,55 @@ func (p *Parser) parseConfigurableCondition() (ConfigurableCondition, error) {
 // Returns:
 //   - SelectCase: The parsed case
 //   - error: nil if successful, otherwise a parse error
-func (p *Parser) parseSelectCase() (SelectCase, error) {
+func (p *Parser) parseSelectCase(isTuple bool) (SelectCase, error) {
+	if isTuple && p.curToken.Type == LPAREN {
+		return p.parseTupleSelectCase()
+	}
+	return p.parseSimpleSelectCase()
+}
+
+func (p *Parser) parseTupleSelectCase() (SelectCase, error) {
+	if p.curToken.Type != LPAREN {
+		return SelectCase{}, fmt.Errorf("%s: expected '(' for tuple pattern in select case", p.curToken.Pos)
+	}
+	p.nextToken()
+
+	var patterns []SelectPattern
+	for p.curToken.Type != EOF && p.curToken.Type != RPAREN {
+		pattern, err := p.parseSelectPattern()
+		if err != nil {
+			return SelectCase{}, err
+		}
+		patterns = append(patterns, pattern)
+		if p.curToken.Type == COMMA {
+			p.nextToken()
+		}
+	}
+
+	if p.curToken.Type != RPAREN {
+		return SelectCase{}, fmt.Errorf("%s: expected ')' after tuple pattern", p.curToken.Pos)
+	}
+	p.nextToken()
+
+	if p.curToken.Type != COLON {
+		return SelectCase{}, fmt.Errorf("%s: expected ':' after select pattern", p.curToken.Pos)
+	}
+	colonPos := p.curToken.Pos
+	p.nextToken()
+
+	value, err := p.parseExpression()
+	if err != nil {
+		return SelectCase{}, err
+	}
+
+	return SelectCase{
+		Patterns: patterns,
+		ColonPos: colonPos,
+		Value:    value,
+	}, nil
+}
+
+func (p *Parser) parseSimpleSelectCase() (SelectCase, error) {
 	pattern, err := p.parseSelectPattern()
 	if err != nil {
 		return SelectCase{}, err
@@ -671,7 +737,6 @@ func (p *Parser) parseSelectCase() (SelectCase, error) {
 	patterns := []SelectPattern{pattern}
 	for p.curToken.Type == COMMA {
 		p.nextToken()
-
 		pattern, err := p.parseSelectPattern()
 		if err != nil {
 			return SelectCase{}, err
@@ -705,15 +770,39 @@ func (p *Parser) parseSelectCase() (SelectCase, error) {
 //   - SelectPattern: The parsed pattern
 //   - error: nil if successful, otherwise a parse error
 func (p *Parser) parseSelectPattern() (SelectPattern, error) {
-	// For simplicity, we handle the common cases
-	expr, err := p.parseExpression()
-	if err != nil {
-		return SelectPattern{}, err
+	switch p.curToken.Type {
+	case UNSET:
+		pos := p.curToken.Pos
+		p.nextToken()
+		return SelectPattern{Value: &Unset{KeywordPos: pos}}, nil
+	case AT:
+		p.nextToken()
+		if p.curToken.Type != IDENT {
+			return SelectPattern{}, fmt.Errorf("%s: expected variable name after '@'", p.curToken.Pos)
+		}
+		binding := p.curToken.Literal
+		p.nextToken()
+		return SelectPattern{Value: &Variable{Name: "any", NamePos: p.curToken.Pos}, IsAny: true, Binding: binding}, nil
+	case IDENT:
+		// Check for "any @ var" pattern
+		if p.curToken.Literal == "any" && p.peekToken.Type == AT {
+			p.nextToken() // consume "any"
+			p.nextToken() // consume "@"
+			if p.curToken.Type != IDENT {
+				return SelectPattern{}, fmt.Errorf("%s: expected variable name after '@'", p.curToken.Pos)
+			}
+			binding := p.curToken.Literal
+			p.nextToken()
+			return SelectPattern{Value: &Variable{Name: "any", NamePos: p.curToken.Pos}, IsAny: true, Binding: binding}, nil
+		}
+		fallthrough
+	default:
+		expr, err := p.parseExpression()
+		if err != nil {
+			return SelectPattern{}, err
+		}
+		return SelectPattern{Value: expr}, nil
 	}
-
-	return SelectPattern{
-		Value: expr,
-	}, nil
 }
 
 // ParseFile parses a Blueprint file from an io.Reader.

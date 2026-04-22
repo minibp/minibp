@@ -14,12 +14,18 @@ import (
 // and a closing }.
 var interpolationPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 
+// UnsetSentinel is a special value returned when a select branch evaluates to "unset".
+// Callers should check for this value and treat the property as if it was never assigned.
+var UnsetSentinel = &struct{ name string }{name: "unset"}
+
 // Evaluator evaluates Blueprint AST nodes into Go values.
 // It maintains a map of variables and configuration values that are
 // used during evaluation of expressions, property values, and select statements.
 type Evaluator struct {
-	vars   map[string]interface{} // Variable table: name -> value
-	config map[string]string      // Configuration: key (arch, os, target) -> value
+	vars         map[string]interface{} // Variable table: name -> value
+	config       map[string]string      // Configuration: key (arch, os, target) -> value
+	strictSelect bool                   // If true, select() with no matching case and no default is an error
+	selectErrors []error                // Errors from select() evaluation when strictSelect is true
 }
 
 // NewEvaluator creates a new Evaluator with empty variable and config maps.
@@ -27,9 +33,18 @@ type Evaluator struct {
 //   - A new Evaluator instance ready to evaluate expressions
 func NewEvaluator() *Evaluator {
 	return &Evaluator{
-		vars:   make(map[string]interface{}),
-		config: make(map[string]string),
+		vars:         make(map[string]interface{}),
+		config:       make(map[string]string),
+		strictSelect: true,
 	}
+}
+
+func (e *Evaluator) SetStrictSelect(strict bool) {
+	e.strictSelect = strict
+}
+
+func (e *Evaluator) SelectErrors() []error {
+	return e.selectErrors
 }
 
 // SetVar sets a variable in the evaluator's variable table.
@@ -156,8 +171,9 @@ func (e *Evaluator) Eval(expr Expression) interface{} {
 		right := e.Eval(v.Args[1])
 		return evalOperator(left, right, v.Operator)
 	case *Select:
-		// Select expression - evaluate conditional
 		return e.evalSelect(v)
+	case *Unset:
+		return UnsetSentinel
 	default:
 		return nil
 	}
@@ -190,15 +206,44 @@ func evalOperator(left, right interface{}, op rune) interface{} {
 		if lok && rok {
 			return ls + rs
 		}
+		// Try list concatenation: []interface{} + []interface{}
+		ll, lok := toInterfaceList(left)
+		rl, rok := toInterfaceList(right)
+		if lok && rok {
+			return append(ll, rl...)
+		}
+		// Try list + scalar: []interface{} + scalar
+		if lok && !rok {
+			return append(ll, right)
+		}
+		// Try scalar + list: scalar + []interface{}
+		if !lok && rok {
+			return append([]interface{}{left}, rl...)
+		}
+		// Try map merge: map[string]interface{} + map[string]interface{}
+		lm, lok := left.(map[string]interface{})
+		rm, rok := right.(map[string]interface{})
+		if lok && rok {
+			result := make(map[string]interface{})
+			for k, v := range lm {
+				result[k] = v
+			}
+			for k, v := range rm {
+				if existing, exists := result[k]; exists {
+					result[k] = mergeValues(existing, v)
+				} else {
+					result[k] = v
+				}
+			}
+			return result
+		}
 	case '-':
-		// Integer subtraction
 		li, lok := left.(int64)
 		ri, rok := right.(int64)
 		if lok && rok {
 			return li - ri
 		}
 	case '*':
-		// Integer multiplication
 		li, lok := left.(int64)
 		ri, rok := right.(int64)
 		if lok && rok {
@@ -206,6 +251,49 @@ func evalOperator(left, right interface{}, op rune) interface{} {
 		}
 	}
 	return nil
+}
+
+func toInterfaceList(v interface{}) ([]interface{}, bool) {
+	switch l := v.(type) {
+	case []interface{}:
+		return l, true
+	case []string:
+		result := make([]interface{}, len(l))
+		for i, s := range l {
+			result[i] = s
+		}
+		return result, true
+	default:
+		return nil, false
+	}
+}
+
+func mergeValues(existing, incoming interface{}) interface{} {
+	// Lists are appended
+	el, eok := toInterfaceList(existing)
+	il, iok := toInterfaceList(incoming)
+	if eok && iok {
+		return append(el, il...)
+	}
+	// Maps are recursively merged
+	em, eok := existing.(map[string]interface{})
+	im, iok := incoming.(map[string]interface{})
+	if eok && iok {
+		result := make(map[string]interface{})
+		for k, v := range em {
+			result[k] = v
+		}
+		for k, v := range im {
+			if existingVal, exists := result[k]; exists {
+				result[k] = mergeValues(existingVal, v)
+			} else {
+				result[k] = v
+			}
+		}
+		return result
+	}
+	// Scalars are overridden
+	return incoming
 }
 
 // toString converts a value to its string representation.
@@ -271,32 +359,166 @@ func (e *Evaluator) evalSelect(s *Select) interface{} {
 		return nil
 	}
 
-	// Evaluate the condition (first argument to select)
-	configValue := e.evalSelectCondition(s.Conditions[0])
+	// Evaluate all conditions
+	condValues := make([]interface{}, len(s.Conditions))
+	for i, cond := range s.Conditions {
+		condValues[i] = e.evalSelectCondition(cond)
+	}
 
+	// Single variable select
+	if len(condValues) == 1 {
+		return e.evalSelectSingle(s, condValues[0])
+	}
+
+	// Multi-variable select
+	return e.evalSelectMulti(s, condValues)
+}
+
+func (e *Evaluator) evalSelectSingle(s *Select, configValue interface{}) interface{} {
 	// First pass: look for non-default pattern match
 	for _, c := range s.Cases {
 		for _, p := range c.Patterns {
-			if e.isDefaultPattern(p) {
+			if e.isDefaultPattern(p) || e.isAnyPattern(p) {
 				continue
 			}
-			// Compare the evaluated pattern value with the config value
+			if e.isUnsetPattern(p) {
+				if configValue == nil || configValue == "" {
+					return e.evalCaseValue(c, configValue)
+				}
+				continue
+			}
 			if p.Value != nil && reflect.DeepEqual(e.evalPatternValue(p.Value), configValue) {
+				return e.evalCaseValue(c, configValue)
+			}
+		}
+	}
+
+	// Second pass: look for "any" pattern
+	for _, c := range s.Cases {
+		for _, p := range c.Patterns {
+			if e.isAnyPattern(p) && !e.isConfigUnset(configValue) {
+				if p.Binding != "" {
+					e.SetVar(p.Binding, configValue)
+				}
 				return e.Eval(c.Value)
 			}
 		}
 	}
 
-	// Second pass: look for default case
+	// Third pass: look for default case
 	for _, c := range s.Cases {
-		if len(c.Patterns) == 1 {
-			if e.isDefaultPattern(c.Patterns[0]) {
-				return e.Eval(c.Value)
+		if len(c.Patterns) == 1 && e.isDefaultPattern(c.Patterns[0]) {
+			return e.evalCaseValue(c, configValue)
+		}
+	}
+
+	// No match and no default
+	if e.strictSelect && len(s.Conditions) > 0 {
+		condDesc := s.Conditions[0].FunctionName
+		if condDesc == "" {
+			condDesc = fmt.Sprintf("%v", configValue)
+		}
+		e.selectErrors = append(e.selectErrors, fmt.Errorf("%s: select(%s) had value %v, which was not handled by the select", s.KeywordPos, condDesc, configValue))
+	}
+
+	return nil
+}
+
+func (e *Evaluator) evalSelectMulti(s *Select, condValues []interface{}) interface{} {
+	// First pass: look for non-default tuple pattern match
+	for _, c := range s.Cases {
+		if len(c.Patterns) != len(condValues) {
+			continue
+		}
+		allMatch := true
+		hasDefault := false
+		for _, p := range c.Patterns {
+			if e.isDefaultPattern(p) {
+				hasDefault = true
+				continue
 			}
+			if e.isAnyPattern(p) || e.isUnsetPattern(p) {
+				hasDefault = true
+				continue
+			}
+		}
+		if hasDefault && !allMatch {
+			continue
+		}
+		if !hasDefault {
+			match := true
+			for i, p := range c.Patterns {
+				if e.isDefaultPattern(p) || e.isAnyPattern(p) {
+					continue
+				}
+				patternVal := e.evalPatternValue(p.Value)
+				if !reflect.DeepEqual(patternVal, condValues[i]) {
+					match = false
+					break
+				}
+			}
+			if match {
+				return e.evalCaseValue(c, nil)
+			}
+		}
+	}
+
+	// Second pass: look for patterns with default wildcards
+	for _, c := range s.Cases {
+		if len(c.Patterns) != len(condValues) {
+			continue
+		}
+		match := true
+		for i, p := range c.Patterns {
+			if e.isDefaultPattern(p) || e.isAnyPattern(p) {
+				continue
+			}
+			if e.isUnsetPattern(p) {
+				if condValues[i] != nil && condValues[i] != "" {
+					match = false
+				}
+				continue
+			}
+			patternVal := e.evalPatternValue(p.Value)
+			if !reflect.DeepEqual(patternVal, condValues[i]) {
+				match = false
+				break
+			}
+		}
+		if match {
+			return e.evalCaseValue(c, nil)
+		}
+	}
+
+	// Third pass: look for default case
+	for _, c := range s.Cases {
+		if len(c.Patterns) == 1 && e.isDefaultPattern(c.Patterns[0]) {
+			return e.evalCaseValue(c, nil)
 		}
 	}
 
 	return nil
+}
+
+func (e *Evaluator) evalCaseValue(c SelectCase, matchedValue interface{}) interface{} {
+	val := e.Eval(c.Value)
+	if val == UnsetSentinel {
+		return UnsetSentinel
+	}
+	// If the value is a string and contains the matched value binding, substitute it
+	if matchedValue != nil {
+		// Check if any pattern in this case had a binding
+		for _, p := range c.Patterns {
+			if p.Binding != "" {
+				e.SetVar(p.Binding, matchedValue)
+			}
+		}
+	}
+	return val
+}
+
+func (e *Evaluator) isConfigUnset(val interface{}) bool {
+	return val == nil || val == ""
 }
 
 // evalSelectCondition evaluates a select condition.
@@ -311,21 +533,51 @@ func (e *Evaluator) evalSelect(s *Select) interface{} {
 // Returns:
 //   - interface{}: The evaluated condition value
 func (e *Evaluator) evalSelectCondition(cond ConfigurableCondition) interface{} {
-	// No function name - just return the first argument
 	if cond.FunctionName == "" {
 		if len(cond.Args) == 0 {
 			return nil
 		}
 		return e.Eval(cond.Args[0])
 	}
-	// No arguments - try to get value from variables
+
+	// Handle soong_config_variable(namespace, variable)
+	if cond.FunctionName == "soong_config_variable" && len(cond.Args) >= 2 {
+		namespace := e.Eval(cond.Args[0])
+		variable := e.Eval(cond.Args[1])
+		nsStr, _ := namespace.(string)
+		varStr, _ := variable.(string)
+		if nsStr != "" && varStr != "" {
+			key := nsStr + "." + varStr
+			if val, ok := e.config[key]; ok {
+				return val
+			}
+			// Also check vars table for soong_config values set via CLI
+			if val, ok := e.vars["soong_config."+key]; ok {
+				return val
+			}
+		}
+		return nil
+	}
+
+	// Handle release_flag(flag)
+	if cond.FunctionName == "release_flag" && len(cond.Args) >= 1 {
+		flag := e.Eval(cond.Args[0])
+		flagStr, _ := flag.(string)
+		if flagStr != "" {
+			key := "release." + flagStr
+			if val, ok := e.config[key]; ok {
+				return val
+			}
+		}
+		return nil
+	}
+
 	if len(cond.Args) == 0 {
 		if val, ok := e.vars[cond.FunctionName]; ok {
 			return val
 		}
 	}
 
-	// Check built-in config functions
 	switch cond.FunctionName {
 	case "target":
 		return e.config["target"]
@@ -336,7 +588,6 @@ func (e *Evaluator) evalSelectCondition(cond ConfigurableCondition) interface{} 
 	case "os":
 		return e.config["os"]
 	default:
-		// Custom config key
 		return e.config[cond.FunctionName]
 	}
 }
@@ -357,6 +608,15 @@ func (e *Evaluator) isDefaultPattern(pattern SelectPattern) bool {
 		return true
 	}
 	return false
+}
+
+func (e *Evaluator) isAnyPattern(pattern SelectPattern) bool {
+	return pattern.IsAny
+}
+
+func (e *Evaluator) isUnsetPattern(pattern SelectPattern) bool {
+	_, ok := pattern.Value.(*Unset)
+	return ok
 }
 
 // evalPatternValue evaluates a pattern value for comparison.

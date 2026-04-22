@@ -1182,6 +1182,165 @@ func TestGeneratorPreservesNativeLinkInputsForExternalNinja(t *testing.T) {
 	}
 }
 
+func TestApplyDefaultsMergesListsAdditively(t *testing.T) {
+	defaults := &parser.Module{
+		Type: "defaults",
+		Map: &parser.Map{Properties: []*parser.Property{
+			{Name: "name", Value: &parser.String{Value: "my_defaults"}},
+			{Name: "cflags", Value: &parser.List{Values: []parser.Expression{
+				&parser.String{Value: "-Wall"},
+			}}},
+		}},
+	}
+	target := &parser.Module{
+		Type: "cc_binary",
+		Map: &parser.Map{Properties: []*parser.Property{
+			{Name: "name", Value: &parser.String{Value: "app"}},
+			{Name: "defaults", Value: &parser.List{Values: []parser.Expression{
+				&parser.String{Value: "my_defaults"},
+			}}},
+			{Name: "cflags", Value: &parser.List{Values: []parser.Expression{
+				&parser.String{Value: "-O2"},
+			}}},
+		}},
+	}
+	modules := map[string]*parser.Module{
+		"my_defaults": defaults,
+	}
+	ApplyDefaults(target, modules)
+
+	cflags := GetListProp(target, "cflags")
+	if len(cflags) != 2 {
+		t.Fatalf("Expected 2 cflags after additive merge, got %d: %v", len(cflags), cflags)
+	}
+	if cflags[0] != "-O2" || cflags[1] != "-Wall" {
+		t.Fatalf("Expected ['-O2' '-Wall'] (target first, then defaults), got %v", cflags)
+	}
+}
+
+func TestPhonyRuleGeneratesEdge(t *testing.T) {
+	r := &phonyRule{}
+	m := &parser.Module{
+		Type: "phony",
+		Map: &parser.Map{Properties: []*parser.Property{
+			{Name: "name", Value: &parser.String{Value: "all"}},
+			{Name: "deps", Value: &parser.List{Values: []parser.Expression{
+				&parser.String{Value: ":app"},
+				&parser.String{Value: ":lib"},
+			}}},
+		}},
+	}
+	edge := r.NinjaEdge(m, DefaultRuleRenderContext())
+	if !strings.Contains(edge, "build all: phony app lib") {
+		t.Fatalf("Expected phony edge with deps, got: %s", edge)
+	}
+}
+
+func TestShBinaryHostRule(t *testing.T) {
+	r := &shBinaryHostRule{}
+	m := &parser.Module{
+		Type: "sh_binary_host",
+		Map: &parser.Map{Properties: []*parser.Property{
+			{Name: "name", Value: &parser.String{Value: "run_tests"}},
+			{Name: "srcs", Value: &parser.List{Values: []parser.Expression{
+				&parser.String{Value: "scripts/run_tests.sh"},
+			}}},
+		}},
+	}
+	outs := r.Outputs(m, DefaultRuleRenderContext())
+	if len(outs) != 1 || outs[0] != "run_tests.sh" {
+		t.Fatalf("Expected [run_tests.sh], got %v", outs)
+	}
+	edge := r.NinjaEdge(m, DefaultRuleRenderContext())
+	if !strings.Contains(edge, "build run_tests.sh: sh_copy scripts/run_tests.sh") {
+		t.Fatalf("Expected sh_copy edge, got: %s", edge)
+	}
+}
+
+func TestPythonBinaryHostRule(t *testing.T) {
+	r := &pythonBinaryHostRule{}
+	m := &parser.Module{
+		Type: "python_binary_host",
+		Map: &parser.Map{Properties: []*parser.Property{
+			{Name: "name", Value: &parser.String{Value: "tool"}},
+			{Name: "srcs", Value: &parser.List{Values: []parser.Expression{
+				&parser.String{Value: "tools/main.py"},
+			}}},
+		}},
+	}
+	outs := r.Outputs(m, DefaultRuleRenderContext())
+	if len(outs) != 1 || outs[0] != "tool.py" {
+		t.Fatalf("Expected [tool.py], got %v", outs)
+	}
+}
+
+func TestCCTestRule(t *testing.T) {
+	r := &ccTestRule{}
+	m := &parser.Module{
+		Type: "cc_test",
+		Map: &parser.Map{Properties: []*parser.Property{
+			{Name: "name", Value: &parser.String{Value: "foo_test"}},
+			{Name: "srcs", Value: &parser.List{Values: []parser.Expression{
+				&parser.String{Value: "foo_test.c"},
+			}}},
+		}},
+	}
+	outs := r.Outputs(m, DefaultRuleRenderContext())
+	if len(outs) != 1 || outs[0] != "foo_test.test" {
+		t.Fatalf("Expected [foo_test.test], got %v", outs)
+	}
+}
+
+func TestApplyDefaultsAddsMissingProps(t *testing.T) {
+	defaults := &parser.Module{
+		Type: "defaults",
+		Map: &parser.Map{Properties: []*parser.Property{
+			{Name: "name", Value: &parser.String{Value: "my_defaults"}},
+			{Name: "cflags", Value: &parser.List{Values: []parser.Expression{
+				&parser.String{Value: "-Wall"},
+			}}},
+			{Name: "ldflags", Value: &parser.List{Values: []parser.Expression{
+				&parser.String{Value: "-lm"},
+			}}},
+		}},
+	}
+	target := &parser.Module{
+		Type: "cc_binary",
+		Map: &parser.Map{Properties: []*parser.Property{
+			{Name: "name", Value: &parser.String{Value: "app"}},
+			{Name: "defaults", Value: &parser.List{Values: []parser.Expression{
+				&parser.String{Value: "my_defaults"},
+			}}},
+			{Name: "cflags", Value: &parser.List{Values: []parser.Expression{
+				&parser.String{Value: "-O2"},
+			}}},
+		}},
+	}
+	modules := map[string]*parser.Module{
+		"my_defaults": defaults,
+	}
+	ApplyDefaults(target, modules)
+
+	cflags := GetListProp(target, "cflags")
+	if len(cflags) != 2 {
+		t.Fatalf("Expected 2 cflags, got %d: %v", len(cflags), cflags)
+	}
+	ldflags := GetListProp(target, "ldflags")
+	if len(ldflags) != 1 || ldflags[0] != "-lm" {
+		t.Fatalf("Expected ldflags ['-lm'] from defaults, got %v", ldflags)
+	}
+}
+
+func TestModuleReferenceParsesNamespacedRef(t *testing.T) {
+	ref := ParseModuleReference("//vendor/acme:libfoo")
+	if ref == nil || !ref.IsModuleRef {
+		t.Fatal("Expected namespaced module reference")
+	}
+	if ref.ModuleName != "libfoo" {
+		t.Fatalf("Expected module name 'libfoo', got '%s'", ref.ModuleName)
+	}
+}
+
 func TestGeneratorSeparatesCustomRulesForDifferentCommands(t *testing.T) {
 	g := dag.NewGraph()
 
