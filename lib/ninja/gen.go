@@ -1,6 +1,24 @@
-// ninja/gen.go - Ninja file generator
-// This file generates Ninja build files from the module dependency graph.
-// It translates minibp module definitions into Ninja syntax for building.
+// Package ninja generates Ninja build files from minibp module definitions.
+// It translates Blueprint (.Android.bp) module definitions into Ninja build rules and edges.
+//
+// Pipeline overview:
+//  1. Load all modules from .bp files (done in lib/build)
+//  2. Build dependency graph with topological sort
+//  3. For each module, find its BuildRule implementation
+//  4. Generate ninja rules (rule definitions)
+//  5. Generate ninja edges (build statements)
+//  6. Write to build.ninja file
+//
+// Key concepts:
+//   - Rules: Define command templates (e.g., "compile this C file")
+//   - Edges: Define build statements connecting inputs to outputs via rules
+//   - Phony: Virtual targets that alias other targets
+//   - Variables: $variable substitution in rules (e.g., $in, $out, $flags)
+//
+// The Generator uses dependency injection for testability:
+//   - Graph interface for dependency ordering
+//   - map[string]BuildRule for module type implementations
+//   - map[string]*parser.Module for all module definitions
 package ninja
 
 import (
@@ -16,7 +34,8 @@ import (
 )
 
 // Graph is the interface needed for ninja generation.
-// It provides the topological sort of module dependencies.
+// It provides the topological sort of module dependencies,
+// allowing parallel builds within each level while maintaining correct build order.
 type Graph interface {
 	// TopoSort returns modules organized by build level.
 	// Each level can be built in parallel, but levels must be built in order.
@@ -43,6 +62,7 @@ type Generator struct {
 }
 
 // Toolchain holds compiler/tool configuration for cross-compilation.
+// It encapsulates all tool paths and flags needed to build for a specific target.
 type Toolchain struct {
 	CC      string   // C compiler command (e.g., gcc, clang)
 	CXX     string   // C++ compiler command (e.g., g++, clang++)
@@ -57,6 +77,14 @@ type Toolchain struct {
 // NewGenerator creates a new Generator with the given graph and rules.
 // The graph provides dependency ordering, rules map module types to implementations,
 // and modules contains all the module definitions.
+//
+// Parameters:
+//   - g: Dependency graph providing topological sort
+//   - rules: Map from module type name to BuildRule implementation
+//   - modules: Map from module name to module definition
+//
+// Returns:
+//   - Generator with default settings (sourceDir=".", outputDir=".")
 func NewGenerator(g Graph, rules map[string]BuildRule, modules map[string]*parser.Module) *Generator {
 	return &Generator{
 		graph:     g,
@@ -69,24 +97,38 @@ func NewGenerator(g Graph, rules map[string]BuildRule, modules map[string]*parse
 
 // SetSourceDir sets the source directory where .bp (Blueprint) files are located.
 // This is used for computing relative paths to source files.
+//
+// Parameters:
+//   - dir: Absolute or relative path to source directory
 func (g *Generator) SetSourceDir(dir string) {
 	g.sourceDir = dir
 }
 
 // SetOutputDir sets the output directory where ninja will run.
 // This is used for computing relative paths from the build directory.
+//
+// Parameters:
+//   - dir: Absolute or relative path to output directory
 func (g *Generator) SetOutputDir(dir string) {
 	g.outputDir = dir
 }
 
 // SetPathPrefix sets the prefix to prepend to source file paths.
 // This is useful when the build directory is different from the source directory.
+//
+// Parameters:
+//   - prefix: Path prefix to prepend (e.g., "bionic/")
 func (g *Generator) SetPathPrefix(prefix string) {
 	g.pathPrefix = prefix
 }
 
 // SetRegen sets the command and files for auto-regeneration of build.ninja.
 // When any input file changes, ninja will re-run minibp to regenerate the build file.
+//
+// Parameters:
+//   - cmd: Command to regenerate (e.g., "minibp -a .")
+//   - files: List of files that trigger regeneration
+//   - output: Output ninja file path
 func (g *Generator) SetRegen(cmd string, files []string, output string) {
 	g.regenCmd = cmd
 	g.inputFiles = files
@@ -95,23 +137,36 @@ func (g *Generator) SetRegen(cmd string, files []string, output string) {
 
 // SetWorkDir sets the working directory for custom rules.
 // This is used by custom rules that need to glob files in the source tree.
+//
+// Parameters:
+//   - dir: Working directory path
 func (g *Generator) SetWorkDir(dir string) {
 	g.workDir = dir
 }
 
 // SetToolchain sets the compiler toolchain configuration.
 // This overrides the default GNU toolchain with custom compilers.
+//
+// Parameters:
+//   - t: Toolchain with compiler paths and flags
 func (g *Generator) SetToolchain(t Toolchain) {
 	g.toolchain = t
 }
 
 // SetArch sets the target architecture for cross-compilation.
 // This appends an architecture suffix to output binaries.
+//
+// Parameters:
+//   - arch: Target architecture (e.g., "arm64", "x86_64")
 func (g *Generator) SetArch(arch string) {
 	g.arch = arch
 }
 
 // SetMultilib sets multiple target architectures for multi-arch builds.
+// When set, the generator will build for all specified architectures.
+//
+// Parameters:
+//   - archs: List of architectures to build for
 func (g *Generator) SetMultilib(archs []string) {
 	g.multilib = archs
 }
@@ -119,6 +174,16 @@ func (g *Generator) SetMultilib(archs []string) {
 // archsForModule returns the list of architectures to build for a given module.
 // For CC modules in multilib mode, it returns all multilib architectures.
 // Otherwise it returns the single configured architecture (may be "").
+//
+// Parameters:
+//   - m: Module to get architectures for
+//
+// Returns:
+//   - Slice of architecture names to build for
+//
+// Edge cases:
+//   - Returns [""] if no architecture is configured
+//   - Non-CC modules always use single architecture even in multilib mode
 func (g *Generator) archsForModule(m *parser.Module) []string {
 	if len(g.multilib) == 0 {
 		return []string{g.arch}
@@ -131,6 +196,12 @@ func (g *Generator) archsForModule(m *parser.Module) []string {
 
 // DefaultToolchain returns a Toolchain with common GNU development tools.
 // It auto-detects ccache availability.
+//
+// Returns:
+//   - Toolchain with default gcc/g++/ar and ccache if available
+//
+// Edge cases:
+//   - ccache is empty string if not found in PATH
 func DefaultToolchain() Toolchain {
 	tc := Toolchain{
 		CC:  "gcc",
@@ -142,6 +213,11 @@ func DefaultToolchain() Toolchain {
 }
 
 // detectCcache searches for ccache in PATH.
+// Ccache is a compiler cache that speeds up incremental builds.
+//
+// Returns:
+//   - Full path to ccache binary if found
+//   - Empty string if ccache is not available
 func detectCcache() string {
 	exe, err := exec.LookPath("ccache")
 	if err != nil {
@@ -152,6 +228,17 @@ func detectCcache() string {
 
 // getRelativePath returns the relative path from the output directory to a file in the source directory.
 // This is used when the build directory differs from the source directory.
+//
+// Parameters:
+//   - file: File path relative to source directory
+//
+// Returns:
+//   - Relative path from output to file
+//
+// Edge cases:
+//   - Returns original file if directories are the same
+//   - Returns original file if absolute conversion fails
+//   - Returns original file if relative calculation fails
 func (g *Generator) getRelativePath(file string) string {
 	if g.sourceDir == g.outputDir {
 		return file
@@ -177,11 +264,29 @@ func (g *Generator) getRelativePath(file string) string {
 }
 
 // collectIncludePaths recursively collects export_include_dirs from a module and its dependencies.
-
 // These directories are added to the compiler's include path (-I flags).
-
+//
 // It traverses cc_library_headers, header_libs, shared_libs, and deps to find all exported headers.
-
+//
+// Parameters:
+//   - moduleName: Name of the module to collect includes for
+//   - visited: Map to track visited modules (prevent cycles)
+//
+// Returns:
+//   - Slice of include directory paths
+//
+// Algorithm:
+//  1. Check if already visited (return nil to prevent infinite loop)
+//  2. Mark current module as visited
+//  3. If cc_library_headers module, add its export_include_dirs
+//  4. Add module's own export_include_dirs
+//  5. Add directories from exported_headers (.h files)
+//  6. Recursively collect from header_libs, shared_libs, and deps
+//
+// Edge cases:
+//   - Module doesn't exist: returns empty slice
+//   - Circular dependencies: prevented by visited map
+//   - Duplicate directories: deduplicated via seen map
 func (g *Generator) collectIncludePaths(moduleName string, visited map[string]bool) []string {
 
 	if visited[moduleName] {
@@ -277,7 +382,35 @@ func (g *Generator) collectIncludePaths(moduleName string, visited map[string]bo
 	return includes
 }
 
-// Generate writes the ninja build file content to the provided writer
+// Generate writes the ninja build file content to the provided writer.
+//
+// It implements the main ninja generation pipeline:
+//  1. Write header comments and regeneration rule
+//  2. Write builddir variable if not "."
+//  3. Render and write ninja rules for all used module types
+//  4. For each module level (from topological sort):
+//     - Collect include paths for the module
+//     - For each architecture in multilib:
+//     - Generate ninja edge for the module
+//     - Add Java classpath dependencies if needed
+//     - Add data file dependencies if needed
+//     - Add include directories to compile commands
+//     - Generate dist edges if needed
+//  5. Write clean rule if there are outputs
+//  6. Write phony targets for each module
+//
+// Parameters:
+//   - w: Writer to output ninja content to
+//
+// Returns:
+//   - nil on successful generation
+//   - error if topological sort fails or other errors occur
+//
+// Edge cases:
+//   - Empty module list: generates minimal ninja file with comments
+//   - Modules without source files: generates phony targets only
+//   - Multilib builds: generates separate edges for each architecture
+//   - cc_library_headers: generates no compile edge, only provides includes
 func (g *Generator) Generate(w io.Writer) error {
 	nw := NewWriter(w)
 
@@ -561,6 +694,18 @@ func (g *Generator) Generate(w io.Writer) error {
 	return nil
 }
 
+// archFlags returns compiler and linker flags for a given target architecture.
+// These flags enable 32-bit or 64-bit code generation as appropriate.
+//
+// Parameters:
+//   - arch: Target architecture name (e.g., "x86", "x86_64", "arm", "arm64")
+//
+// Returns:
+//   - cflags: Compiler flags for the architecture
+//   - ldflags: Linker flags for the architecture
+//
+// Edge cases:
+//   - Unknown architecture: returns nil, nil
 func archFlags(arch string) (cflags []string, ldflags []string) {
 	switch arch {
 	case "x86":
@@ -576,10 +721,30 @@ func archFlags(arch string) (cflags []string, ldflags []string) {
 	}
 }
 
+// ruleRenderContext returns the rule render context for the generator's default architecture.
+// This is a convenience method that delegates to ruleRenderContextForArch.
+//
+// Returns:
+//   - RuleRenderContext configured for the default architecture
 func (g *Generator) ruleRenderContext() RuleRenderContext {
 	return g.ruleRenderContextForArch(g.arch)
 }
 
+// ruleRenderContextForArch returns the rule render context for a specific architecture.
+// It combines toolchain settings with architecture-specific flags to create
+// a complete context for rendering ninja rules.
+//
+// Parameters:
+//   - arch: Target architecture name
+//
+// Returns:
+//   - RuleRenderContext with all toolchain and flags configured
+//
+// Algorithm:
+//  1. Apply defaults if toolchain paths are empty
+//  2. Append architecture-specific flags
+//  3. Set architecture suffix for output files
+//  4. Add sysroot flag if configured
 func (g *Generator) ruleRenderContextForArch(arch string) RuleRenderContext {
 	tc := g.toolchain
 	if tc.CC == "" {
@@ -615,10 +780,27 @@ func (g *Generator) ruleRenderContextForArch(arch string) RuleRenderContext {
 	return ctx
 }
 
+// shellQuote wraps a command-line argument in double quotes,
+// escaping any embedded double quotes with backslashes.
+// This is needed for rsp files on Windows.
+//
+// Parameters:
+//   - arg: Argument to quote
+//
+// Returns:
+//   - Quoted and escaped argument
 func shellQuote(arg string) string {
 	return "\"" + strings.ReplaceAll(arg, "\"", "\\\"") + "\""
 }
 
+// cleanCommand generates the shell command to delete build outputs.
+// It uses platform-specific syntax (cmd /c for Windows, rm -f for Unix).
+//
+// Parameters:
+//   - outputs: List of file paths to delete
+//
+// Returns:
+//   - Platform-appropriate delete command
 func cleanCommand(outputs []string) string {
 	quoted := make([]string, 0, len(outputs))
 	for _, out := range outputs {
@@ -630,6 +812,19 @@ func cleanCommand(outputs []string) string {
 	return "rm -f " + strings.Join(quoted, " ")
 }
 
+// collectBuildOutputs extracts output file paths from a ninja edge definition.
+// It parses "build" lines to find the output filenames.
+//
+// Parameters:
+//   - edge: Ninja edge definition string
+//
+// Returns:
+//   - List of output file paths (unescaped)
+//
+// Edge cases:
+//   - Empty edge: returns nil
+//   - No "build" prefix: returns nil
+//   - Malformed lines: skipped
 func collectBuildOutputs(edge string) []string {
 	if edge == "" {
 		return nil
@@ -659,13 +854,23 @@ func collectBuildOutputs(edge string) []string {
 	return outputs
 }
 
+// parsedBuildLine represents a parsed "build" statement in ninja syntax.
+// It contains the outputs, rule name, inputs, and order-only dependencies.
 type parsedBuildLine struct {
-	Outputs []string
-	Rule    string
-	Inputs  []string
-	Deps    []string
+	Outputs []string // Output file paths
+	Rule    string   // Rule name (e.g., "cc_compile")
+	Inputs  []string // Input file paths
+	Deps    []string // Order-only dependencies
 }
 
+// ninjaUnescape removes ninja escape sequences from a string.
+// It converts "$x" to just "x" (single character after $).
+//
+// Parameters:
+//   - s: String with ninja escape sequences
+//
+// Returns:
+//   - String with escapes removed
 func ninjaUnescape(s string) string {
 	if s == "" {
 		return s
@@ -684,6 +889,18 @@ func ninjaUnescape(s string) string {
 	return b.String()
 }
 
+// splitNinjaEscapedFields splits a string into fields, respecting ninja $ escaping.
+// Spaces and tabs separate fields, but $ escapes the separator.
+//
+// Parameters:
+//   - s: String to split
+//
+// Returns:
+//   - Slice of field strings
+//
+// Edge cases:
+//   - Empty input: returns nil
+//   - Trailing $: treated as literal $
 func splitNinjaEscapedFields(s string) []string {
 	if s == "" {
 		return nil
@@ -722,6 +939,19 @@ func splitNinjaEscapedFields(s string) []string {
 	return fields
 }
 
+// parseBuildLine parses a ninja "build" line into its components.
+// It extracts outputs, rule name, inputs, and order-only dependencies.
+//
+// Parameters:
+//   - line: A single line from ninja build file
+//
+// Returns:
+//   - parsedBuildLine with components, or false if parsing fails
+//
+// Edge cases:
+//   - Missing "build " prefix: returns false
+//   - Missing ": " separator: returns false
+//   - No outputs or rule: returns false
 func parseBuildLine(line string) (parsedBuildLine, bool) {
 	if !strings.HasPrefix(line, "build ") {
 		return parsedBuildLine{}, false
@@ -752,7 +982,21 @@ func parseBuildLine(line string) (parsedBuildLine, bool) {
 	return parsed, true
 }
 
-// addIncludesToEdge adds include directories only to compile commands.
+// addIncludesToEdge adds include directories to compile commands within a ninja edge.
+// It inserts -I and -isystem flags into the compile rule's flags variable.
+//
+// Parameters:
+//   - edge: Ninja edge definition string
+//   - includes: List of include directory paths
+//
+// Returns:
+//   - Modified edge with include flags added
+//
+// Algorithm:
+//  1. Build include flags string (one per directory)
+//  2. Find the compile rule's flags line
+//  3. Append include flags to that line
+//  4. Handle system includes (-isystem) specially
 func (g *Generator) addIncludesToEdge(edge string, includes []string) string {
 	if len(includes) == 0 {
 		return edge
@@ -789,6 +1033,15 @@ func (g *Generator) addIncludesToEdge(edge string, includes []string) string {
 	return strings.Join(lines, "\n")
 }
 
+// javaDepOutputs finds .jar output files from a module's java dependencies.
+// These are used to construct the classpath for compilation.
+//
+// Parameters:
+//   - moduleName: Name of the module to find dependencies for
+//   - ctx: Rule render context
+//
+// Returns:
+//   - List of .jar file paths from dependencies
 func (g *Generator) javaDepOutputs(moduleName string, ctx RuleRenderContext) []string {
 	m, ok := g.modules[moduleName]
 	if !ok || m == nil {
@@ -823,6 +1076,15 @@ func (g *Generator) javaDepOutputs(moduleName string, ctx RuleRenderContext) []s
 	return outputs
 }
 
+// addJavaDepsToEdge adds Java classpath dependencies to a Java module's ninja edge.
+// It adds the .jar files from deps as both implicit inputs and classpath.
+//
+// Parameters:
+//   - m: Module to add dependencies to
+//   - edge: Ninja edge definition string
+//
+// Returns:
+//   - Modified edge with classpath added
 func (g *Generator) addJavaDepsToEdge(m *parser.Module, edge string) string {
 	depJars := g.javaDepOutputs(getName(m), g.ruleRenderContext())
 	if len(depJars) == 0 {
@@ -856,6 +1118,15 @@ func (g *Generator) addJavaDepsToEdge(m *parser.Module, edge string) string {
 	return strings.Join(lines, "\n")
 }
 
+// moduleDataOutputs resolves data file references from a module's data property.
+// It handles both module references (":name") and plain file paths.
+//
+// Parameters:
+//   - m: Module to get data outputs from
+//   - ctx: Rule render context
+//
+// Returns:
+//   - List of resolved file paths
 func (g *Generator) moduleDataOutputs(m *parser.Module, ctx RuleRenderContext) []string {
 	data := getData(m)
 	if len(data) == 0 {
@@ -882,6 +1153,16 @@ func (g *Generator) moduleDataOutputs(m *parser.Module, ctx RuleRenderContext) [
 	return outputs
 }
 
+// addDataDepsToEdge adds data file dependencies to a module's ninja edge.
+// These are files needed at runtime (e.g., assets, resources).
+//
+// Parameters:
+//   - m: Module to add data dependencies for
+//   - edge: Ninja edge definition string
+//   - ctx: Rule render context
+//
+// Returns:
+//   - Modified edge with data dependencies added
 func (g *Generator) addDataDepsToEdge(m *parser.Module, edge string, ctx RuleRenderContext) string {
 	dataOutputs := g.moduleDataOutputs(m, ctx)
 	if len(dataOutputs) == 0 {

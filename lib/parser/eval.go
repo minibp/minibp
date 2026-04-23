@@ -1,3 +1,11 @@
+// Package parser provides lexical analysis and parsing for Blueprint build definitions.
+// Eval subpackage - AST evaluation and expression processing.
+//
+// This file contains the Evaluator which transforms AST nodes into
+// Go values. It handles variable resolution, string interpolation,
+// operator evaluation, and select() conditional expressions.
+// The evaluator is the bridge between the parsed AST and the build system's
+// runtime data structures.
 package parser
 
 import (
@@ -12,15 +20,28 @@ import (
 // into string literals. The pattern matches ${ followed by an identifier
 // (starting with letter or underscore, followed by letters, digits, underscores)
 // and a closing }.
+//
+// Example matches:
+//   - ${my_var}
+//   - ${PRODUCT_NAME}
+//   - ${CONFIG_ARCH}
 var interpolationPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 
 // UnsetSentinel is a special value returned when a select branch evaluates to "unset".
 // Callers should check for this value and treat the property as if it was never assigned.
+// This allows properties to be removed in specific variants or configurations.
 var UnsetSentinel = &struct{ name string }{name: "unset"}
 
 // Evaluator evaluates Blueprint AST nodes into Go values.
 // It maintains a map of variables and configuration values that are
 // used during evaluation of expressions, property values, and select statements.
+//
+// The evaluator supports:
+//   - Variable assignment and resolution
+//   - String interpolation with ${var} syntax
+//   - Binary operators (+, -, *)
+//   - select() conditional expressions
+//   - Configuration-specific variant selection
 type Evaluator struct {
 	vars         map[string]interface{} // Variable table: name -> value
 	config       map[string]string      // Configuration: key (arch, os, target) -> value
@@ -39,10 +60,24 @@ func NewEvaluator() *Evaluator {
 	}
 }
 
+// SetStrictSelect controls whether select() statements without a matching case and no default
+// should produce an error. When strict is true (the default), unmatched select() expressions
+// will be collected in SelectErrors for later reporting.
+// When strict is false, unmatched select() returns nil silently.
+//
+// Parameters:
+//   - strict: Whether to enforce strict select() evaluation
 func (e *Evaluator) SetStrictSelect(strict bool) {
 	e.strictSelect = strict
 }
 
+// SelectErrors returns any errors collected from select() evaluations.
+// These are errors where a select() had no matching case and no default,
+// and strict mode was enabled. Callers should check this after evaluation
+// and report any errors appropriately.
+//
+// Returns:
+//   - []error: List of select() evaluation errors
 func (e *Evaluator) SelectErrors() []error {
 	return e.selectErrors
 }
@@ -50,6 +85,15 @@ func (e *Evaluator) SelectErrors() []error {
 // SetVar sets a variable in the evaluator's variable table.
 // Variables are set by assignment statements and can be referenced
 // in expressions throughout the Blueprint file.
+//
+// Supported value types:
+//   - string: String values
+//   - int64: Integer values
+//   - bool: Boolean values
+//   - []string: List of strings
+//   - []interface{}: Generic list
+//   - map[string]interface{}: Map/dictionary
+//
 // Parameters:
 //   - name: The variable name
 //   - value: The value to set (can be string, int64, bool, []interface{}, map, etc.)
@@ -60,6 +104,10 @@ func (e *Evaluator) SetVar(name string, value interface{}) {
 // SetConfig sets a configuration value for the evaluator.
 // Configuration values are used by select() statements to determine
 // which branch to take. Common config keys include "arch", "os", "host", "target".
+//
+// Configuration values are typically set from build system parameters
+// or command-line flags.
+//
 // Parameters:
 //   - key: The configuration key (e.g., "arch", "os")
 //   - value: The configuration value (e.g., "arm", "linux")
@@ -70,6 +118,11 @@ func (e *Evaluator) SetConfig(key, value string) {
 // ProcessAssignments processes all assignments in a File.
 // It iterates through all definitions in the file and evaluates any assignment statements.
 // Assignment statements set variables that can be referenced in subsequent module definitions.
+//
+// Variables are processed in order, so later assignments can reference
+// earlier ones. The evaluator handles both = (simple) and += (concatenative)
+// assignments.
+//
 // Parameters:
 //   - file: The parsed Blueprint file containing definitions
 func (e *Evaluator) ProcessAssignments(file *File) {
@@ -79,15 +132,23 @@ func (e *Evaluator) ProcessAssignments(file *File) {
 // ProcessAssignmentsFromDefs processes assignments from a list of definitions.
 // This is used both for top-level assignments and for nested processing.
 // It handles both simple (=) and concatenative (+=) assignments.
+//
+// For += assignments:
+//   - String += string: appends to existing string
+//   - String += list: wraps list in string context (error-prone)
+//   - List += string: appends string to list
+//   - List += list: concatenates lists
+//
 // Parameters:
 //   - defs: A list of definitions to process
 func (e *Evaluator) ProcessAssignmentsFromDefs(defs []Definition) {
 	for _, def := range defs {
 		assign, ok := def.(*Assignment)
 		if !ok {
-			continue
+			continue // Skip non-assignment definitions
 		}
 		val := e.Eval(assign.Value)
+
 		// Handle += operator - concatenate to existing variable
 		if assign.Assigner == "+=" {
 			if existing, ok := e.vars[assign.Name]; ok {
@@ -110,11 +171,12 @@ func (e *Evaluator) ProcessAssignmentsFromDefs(defs []Definition) {
 					if nv, ok := val.([]interface{}); ok {
 						e.vars[assign.Name] = append(ev, nv...)
 					} else {
+						// Append single value as interface{}
 						e.vars[assign.Name] = append(ev, val)
 					}
 				}
 			} else {
-				// First += creates the variable
+				// First += creates the variable (treat as simple assignment)
 				e.vars[assign.Name] = val
 			}
 		} else {
@@ -128,6 +190,15 @@ func (e *Evaluator) ProcessAssignmentsFromDefs(defs []Definition) {
 // This is the main entry point for evaluating any Blueprint expression.
 // It handles all expression types and performs variable resolution,
 // string interpolation, and operator evaluation.
+//
+// Return types:
+//   - string: for String literals, Variable references
+//   - int64: for Int64 literals
+//   - bool: for Bool literals
+//   - []interface{}: for List expressions
+//   - map[string]interface{}: for Map expressions
+//   - nil: for undefined variables
+//
 // Parameters:
 //   - expr: The expression to evaluate
 //
@@ -137,6 +208,7 @@ func (e *Evaluator) Eval(expr Expression) interface{} {
 	switch v := expr.(type) {
 	case *String:
 		// String literal - perform variable interpolation
+		// ${variable} patterns are replaced with variable values
 		return e.interpolateString(v.Value)
 	case *Int64:
 		// Integer literal - return as-is
@@ -171,23 +243,37 @@ func (e *Evaluator) Eval(expr Expression) interface{} {
 		right := e.Eval(v.Args[1])
 		return evalOperator(left, right, v.Operator)
 	case *Select:
+		// Select conditional - evaluate based on configuration
 		return e.evalSelect(v)
 	case *Unset:
+		// Unset returns the sentinel value for caller to handle
 		return UnsetSentinel
 	default:
+		// Unknown expression type returns nil
 		return nil
 	}
 }
 
 // evalOperator applies a binary operator to two values.
 // Currently supports:
-//   - '+' operator: integer addition (int64 + int64) or string concatenation (string + string)
+//   - '+' operator:
+//   - int64 + int64: integer addition
+//   - string + string: string concatenation
+//   - []interface{} + []interface{}: list concatenation
+//   - []interface{} + scalar: append to list
+//   - scalar + []interface{}: prepend to list
+//   - map + map: map merge
+//   - '-' operator:
+//   - int64 - int64: integer subtraction
+//   - '*' operator:
+//   - int64 * int64: integer multiplication
 //
 // Returns nil if the operator is not supported for the given types.
+//
 // Parameters:
 //   - left: Left operand
 //   - right: Right operand
-//   - op: The operator rune ('+')
+//   - op: The operator rune ('+', '-', '*')
 //
 // Returns:
 //   - interface{}: Result of the operation, or nil if unsupported
@@ -230,6 +316,7 @@ func evalOperator(left, right interface{}, op rune) interface{} {
 			}
 			for k, v := range rm {
 				if existing, exists := result[k]; exists {
+					// Recursively merge nested values
 					result[k] = mergeValues(existing, v)
 				} else {
 					result[k] = v
@@ -238,12 +325,14 @@ func evalOperator(left, right interface{}, op rune) interface{} {
 			return result
 		}
 	case '-':
+		// Integer subtraction
 		li, lok := left.(int64)
 		ri, rok := right.(int64)
 		if lok && rok {
 			return li - ri
 		}
 	case '*':
+		// Integer multiplication
 		li, lok := left.(int64)
 		ri, rok := right.(int64)
 		if lok && rok {
@@ -253,11 +342,22 @@ func evalOperator(left, right interface{}, op rune) interface{} {
 	return nil
 }
 
+// toInterfaceList converts various slice types to []interface{} for unified handling.
+// It handles []interface{} directly, []string by converting each element, and returns false for other types.
+// This allows the operator evaluation to work with different slice representations uniformly.
+//
+// Parameters:
+//   - v: The value to convert (must be []interface{} or []string)
+//
+// Returns:
+//   - []interface{}: The converted slice, or nil if conversion not possible
+//   - bool: true if conversion was successful
 func toInterfaceList(v interface{}) ([]interface{}, bool) {
 	switch l := v.(type) {
 	case []interface{}:
 		return l, true
 	case []string:
+		// Convert []string to []interface{}
 		result := make([]interface{}, len(l))
 		for i, s := range l {
 			result[i] = s
@@ -268,6 +368,20 @@ func toInterfaceList(v interface{}) ([]interface{}, bool) {
 	}
 }
 
+// mergeValues merges two values for map operations during evaluation.
+// When merging maps, nested lists are appended rather than replaced.
+// This implements Blueprint's semantic where map properties merge recursively:
+//
+//   - Lists/arrays: appended (combined)
+//   - Maps: recursively merged (nested properties merged)
+//   - Scalars: overridden (replaced)
+//
+// Parameters:
+//   - existing: The value already in the map
+//   - incoming: The new value being merged
+//
+// Returns:
+//   - interface{}: The merged result
 func mergeValues(existing, incoming interface{}) interface{} {
 	// Lists are appended
 	el, eok := toInterfaceList(existing)
@@ -298,6 +412,8 @@ func mergeValues(existing, incoming interface{}) interface{} {
 
 // toString converts a value to its string representation.
 // Handles string, []string (joined with space), and other types (formatted as %v).
+// The second return value is always true for interface compatibility.
+//
 // Parameters:
 //   - v: The value to convert
 //
@@ -309,8 +425,10 @@ func toString(v interface{}) (string, bool) {
 	case string:
 		return s, true
 	case []string:
+		// Join string slice with spaces
 		return strings.Join(s, " "), true
 	default:
+		// Use default formatting for other types
 		return fmt.Sprintf("%v", v), true
 	}
 }
@@ -318,6 +436,8 @@ func toString(v interface{}) (string, bool) {
 // interpolateString performs variable substitution in a string.
 // It replaces ${variable_name} patterns with the variable's value.
 // If a variable is not found, the pattern is left unchanged in the result.
+// This allows strings to contain multiple variable references.
+//
 // Parameters:
 //   - s: The string with potential ${...} interpolation patterns
 //
@@ -349,12 +469,15 @@ func (e *Evaluator) interpolateString(s string) string {
 // Select chooses different values based on configuration (arch, os, host, target).
 // It evaluates the condition, then matches it against each case pattern.
 // If no pattern matches, the "default" case (if present) is used.
+// If still no match and strict mode is enabled, an error is recorded.
+//
 // Parameters:
 //   - s: The Select AST node to evaluate
 //
 // Returns:
 //   - interface{}: The value from the matching case, or nil if no match
 func (e *Evaluator) evalSelect(s *Select) interface{} {
+	// Guard against empty conditions or cases
 	if len(s.Conditions) == 0 || len(s.Cases) == 0 {
 		return nil
 	}
@@ -365,7 +488,7 @@ func (e *Evaluator) evalSelect(s *Select) interface{} {
 		condValues[i] = e.evalSelectCondition(cond)
 	}
 
-	// Single variable select
+	// Single variable select vs multi-variable (tuple) select
 	if len(condValues) == 1 {
 		return e.evalSelectSingle(s, condValues[0])
 	}
@@ -374,19 +497,37 @@ func (e *Evaluator) evalSelect(s *Select) interface{} {
 	return e.evalSelectMulti(s, condValues)
 }
 
+// evalSelectSingle handles select() evaluation with a single condition value.
+// It performs a three-pass matching algorithm:
+//
+//	First pass: Look for non-default exact pattern matches.
+//	Second pass: Look for "any" wildcard patterns (@pattern or any @var).
+//	Third pass: Look for "default" fallback pattern.
+//
+// If no pattern matches and no default exists, in strict mode an error is recorded.
+//
+// Parameters:
+//   - s: The Select AST node
+//   - configValue: The evaluated configuration value to match against patterns
+//
+// Returns:
+//   - interface{}: The value from the matching case, or nil
 func (e *Evaluator) evalSelectSingle(s *Select, configValue interface{}) interface{} {
 	// First pass: look for non-default pattern match
 	for _, c := range s.Cases {
 		for _, p := range c.Patterns {
+			// Skip default and any patterns in first pass
 			if e.isDefaultPattern(p) || e.isAnyPattern(p) {
 				continue
 			}
+			// Handle unset pattern
 			if e.isUnsetPattern(p) {
 				if configValue == nil || configValue == "" {
 					return e.evalCaseValue(c, configValue)
 				}
 				continue
 			}
+			// Exact match comparison
 			if p.Value != nil && reflect.DeepEqual(e.evalPatternValue(p.Value), configValue) {
 				return e.evalCaseValue(c, configValue)
 			}
@@ -397,6 +538,7 @@ func (e *Evaluator) evalSelectSingle(s *Select, configValue interface{}) interfa
 	for _, c := range s.Cases {
 		for _, p := range c.Patterns {
 			if e.isAnyPattern(p) && !e.isConfigUnset(configValue) {
+				// Bind matched value if pattern has binding
 				if p.Binding != "" {
 					e.SetVar(p.Binding, configValue)
 				}
@@ -412,7 +554,7 @@ func (e *Evaluator) evalSelectSingle(s *Select, configValue interface{}) interfa
 		}
 	}
 
-	// No match and no default
+	// No match and no default - record error in strict mode
 	if e.strictSelect && len(s.Conditions) > 0 {
 		condDesc := s.Conditions[0].FunctionName
 		if condDesc == "" {
@@ -424,12 +566,25 @@ func (e *Evaluator) evalSelectSingle(s *Select, configValue interface{}) interfa
 	return nil
 }
 
+// evalSelectMulti handles select() evaluation with multiple condition values (tuple select).
+// This is used when select() conditions are specified as tuples, e.g., select((arch(), os()), {...}).
+// It performs a similar three-pass matching algorithm as evalSelectSingle but accounts
+// for multiple condition values per case.
+//
+// Parameters:
+//   - s: The Select AST node
+//   - condValues: The list of evaluated configuration values
+//
+// Returns:
+//   - interface{}: The value from the matching case, or nil
 func (e *Evaluator) evalSelectMulti(s *Select, condValues []interface{}) interface{} {
 	// First pass: look for non-default tuple pattern match
 	for _, c := range s.Cases {
+		// Skip cases with wrong number of patterns
 		if len(c.Patterns) != len(condValues) {
 			continue
 		}
+
 		allMatch := true
 		hasDefault := false
 		for _, p := range c.Patterns {
@@ -442,9 +597,13 @@ func (e *Evaluator) evalSelectMulti(s *Select, condValues []interface{}) interfa
 				continue
 			}
 		}
+
+		// Skip if mixed defaults with non-matching
 		if hasDefault && !allMatch {
 			continue
 		}
+
+		// Try exact match for all patterns
 		if !hasDefault {
 			match := true
 			for i, p := range c.Patterns {
@@ -463,7 +622,7 @@ func (e *Evaluator) evalSelectMulti(s *Select, condValues []interface{}) interfa
 		}
 	}
 
-	// Second pass: look for patterns with default wildcards
+	// Second pass: look for patterns with any/unset wildcards
 	for _, c := range s.Cases {
 		if len(c.Patterns) != len(condValues) {
 			continue
@@ -500,6 +659,17 @@ func (e *Evaluator) evalSelectMulti(s *Select, condValues []interface{}) interfa
 	return nil
 }
 
+// evalCaseValue evaluates the value expression of a select case.
+// If the case value is UnsetSentinel, it returns the sentinel directly.
+// If the case had a binding (any @var pattern), it also binds the matched value
+// to that variable for use in the returned value expression.
+//
+// Parameters:
+//   - c: The SelectCase to evaluate
+//   - matchedValue: The value that matched the pattern (for binding)
+//
+// Returns:
+//   - interface{}: The evaluated case value, or UnsetSentinel
 func (e *Evaluator) evalCaseValue(c SelectCase, matchedValue interface{}) interface{} {
 	val := e.Eval(c.Value)
 	if val == UnsetSentinel {
@@ -517,6 +687,14 @@ func (e *Evaluator) evalCaseValue(c SelectCase, matchedValue interface{}) interf
 	return val
 }
 
+// isConfigUnset checks if a configuration value should be treated as unset.
+// A value is considered unset if it is nil or an empty string.
+//
+// Parameters:
+//   - val: The configuration value to check
+//
+// Returns:
+//   - bool: true if the value should be treated as unset
 func (e *Evaluator) isConfigUnset(val interface{}) bool {
 	return val == nil || val == ""
 }
@@ -525,7 +703,11 @@ func (e *Evaluator) isConfigUnset(val interface{}) bool {
 // Conditions can be:
 //   - Empty: uses the first argument as the value
 //   - Built-in functions: target, arch, host, os - look up from config
-//   - Custom: any other identifier looks up from config
+//   - soong_config_variable(namespace, variable): Soong config variable
+//   - release_flag(flag): Release flag value
+//   - variant(name): Variant-specific value
+//   - product_variable(name): Product variable value
+//   - Custom: any other identifier looks up from config or vars
 //
 // Parameters:
 //   - cond: The condition to evaluate
@@ -533,6 +715,7 @@ func (e *Evaluator) isConfigUnset(val interface{}) bool {
 // Returns:
 //   - interface{}: The evaluated condition value
 func (e *Evaluator) evalSelectCondition(cond ConfigurableCondition) interface{} {
+	// Empty condition function - use argument as value
 	if cond.FunctionName == "" {
 		if len(cond.Args) == 0 {
 			return nil
@@ -596,12 +779,14 @@ func (e *Evaluator) evalSelectCondition(cond ConfigurableCondition) interface{} 
 		return nil
 	}
 
+	// Check if it's a variable reference (function name is an empty string)
 	if len(cond.Args) == 0 {
 		if val, ok := e.vars[cond.FunctionName]; ok {
 			return val
 		}
 	}
 
+	// Switch on built-in function names
 	switch cond.FunctionName {
 	case "target":
 		return e.config["target"]
@@ -612,6 +797,7 @@ func (e *Evaluator) evalSelectCondition(cond ConfigurableCondition) interface{} 
 	case "os":
 		return e.config["os"]
 	default:
+		// Fall back to config lookup
 		return e.config[cond.FunctionName]
 	}
 }
@@ -619,6 +805,7 @@ func (e *Evaluator) evalSelectCondition(cond ConfigurableCondition) interface{} 
 // isDefaultPattern checks if a pattern is the "default" pattern.
 // The default pattern is used as a fallback when no other pattern matches.
 // It can be specified as a variable named "default" or a string "default".
+//
 // Parameters:
 //   - pattern: The pattern to check
 //
@@ -634,10 +821,27 @@ func (e *Evaluator) isDefaultPattern(pattern SelectPattern) bool {
 	return false
 }
 
+// isAnyPattern checks if a pattern is a wildcard pattern ("any").
+// Wildcard patterns match any value and can optionally bind the matched
+// value to a variable using the "any @ var" syntax.
+//
+// Parameters:
+//   - pattern: The pattern to check
+//
+// Returns:
+//   - bool: true if this is an any wildcard pattern
 func (e *Evaluator) isAnyPattern(pattern SelectPattern) bool {
 	return pattern.IsAny
 }
 
+// isUnsetPattern checks if a pattern is the "unset" pattern.
+// The unset pattern matches when a configuration value is not set or is empty.
+//
+// Parameters:
+//   - pattern: The pattern to check
+//
+// Returns:
+//   - bool: true if this is an unset pattern
 func (e *Evaluator) isUnsetPattern(pattern SelectPattern) bool {
 	_, ok := pattern.Value.(*Unset)
 	return ok
@@ -646,6 +850,7 @@ func (e *Evaluator) isUnsetPattern(pattern SelectPattern) bool {
 // evalPatternValue evaluates a pattern value for comparison.
 // It converts the pattern expression to a comparable Go value.
 // Variables are resolved from the variable table.
+//
 // Parameters:
 //   - expr: The pattern expression to evaluate
 //
@@ -660,9 +865,11 @@ func (e *Evaluator) evalPatternValue(expr Expression) interface{} {
 	case *Bool:
 		return v.Value
 	case *Variable:
+		// Variable reference - resolve from variable table
 		if val, ok := e.vars[v.Name]; ok {
 			return val
 		}
+		// Return variable name as fallback for config keys
 		return v.Name
 	default:
 		return e.Eval(expr)
@@ -673,6 +880,7 @@ func (e *Evaluator) evalPatternValue(expr Expression) interface{} {
 // If an evaluator is provided, it first evaluates the expression.
 // Otherwise, it converts the raw AST node to string.
 // This is useful for debugging and generating output.
+//
 // Parameters:
 //   - expr: The expression to convert
 //   - eval: Optional evaluator for evaluation
@@ -687,6 +895,7 @@ func EvalToString(expr Expression, eval *Evaluator) string {
 		}
 		return fmt.Sprintf("%v", val)
 	}
+	// Handle common expression types without evaluation
 	switch v := expr.(type) {
 	case *String:
 		return v.Value
@@ -726,6 +935,7 @@ func EvalToStringList(expr Expression, eval *Evaluator) []string {
 	case []string:
 		return v
 	case []interface{}:
+		// Filter to only string values
 		var result []string
 		for _, item := range v {
 			if s, ok := item.(string); ok {
@@ -742,6 +952,7 @@ func EvalToStringList(expr Expression, eval *Evaluator) []string {
 
 // EvalToStringListNoEval extracts string values from a List expression
 // without evaluation. This is used when no evaluator is available.
+//
 // Parameters:
 //   - expr: The List expression
 //
@@ -763,6 +974,9 @@ func EvalToStringListNoEval(expr Expression) []string {
 // EvalProperty evaluates a property's value and returns a new Property with the evaluated value.
 // This transforms AST expression nodes into their evaluated Go values.
 // The property name and position information are preserved; only the value is evaluated.
+// The evaluated value is converted back to an AST node for compatibility
+// with other parts of the system.
+//
 // Parameters:
 //   - prop: The property to evaluate
 //
@@ -808,6 +1022,7 @@ func (e *Evaluator) EvalProperty(prop *Property) *Property {
 // performing string interpolation, and evaluating select() expressions.
 // The module's main properties, arch-specific overrides, host overrides, and target
 // overrides are all evaluated in-place.
+//
 // Parameters:
 //   - m: The module to evaluate (modified in place)
 func (e *Evaluator) EvalModule(m *Module) {

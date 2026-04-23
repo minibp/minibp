@@ -1,4 +1,21 @@
-// ninja/cc.go - C/C++ build rules for minibp
+// Package ninja implements C/C++ build rules for minibp.
+// This file implements the BuildRule interface for C and C++ language modules.
+// It provides rules for compiling C/C++ source files into libraries, binaries, and object files.
+// The key module types are: cc_library, cc_library_static, cc_library_shared, cc_object, cc_binary, and cc_library_headers.
+//
+// Algorithm overview:
+//  1. Detect whether source files are C or C++ based on file extensions
+//  2. Generate compile rules that invoke the C/C++ compiler with appropriate flags
+//  3. For libraries, archive object files into .a (static) or link into .so (shared)
+//  4. For binaries, link object files with library dependencies
+//  5. Support LTO (Link Time Optimization) via -flto flags
+//  6. Support ccache for faster incremental builds
+//
+// Key functions:
+//   - detectCompilerType: Determine C vs C++ based on file extensions
+//   - ccCompilerCmd: Get compiler command with optional ccache wrapper
+//   - ltoFlags: Get LTO flags for compilation and linking
+//   - ltoArchiveCmd: Get appropriate archiver for LTO static libraries
 package ninja
 
 import (
@@ -8,6 +25,9 @@ import (
 	"strings"
 )
 
+// detectCompilerType determines whether source files are C or C++ based on file extensions.
+// It returns "cpp" if any source file has a C++ extension (.cpp, .cc, .cxx, .c++, .hpp, .hxx).
+// Otherwise it returns "cc" for C files. Header files (.h) are treated as C unless a C++ specific extension is used.
 func detectCompilerType(srcs []string) string {
 	for _, src := range srcs {
 		ext := strings.ToLower(filepath.Ext(src))
@@ -21,6 +41,10 @@ func detectCompilerType(srcs []string) string {
 	return "cc"
 }
 
+// ccCompilerCmd returns the C/C++ compiler command to use for compilation.
+// It selects between CC (C compiler) and CXX (C++ compiler) based on compilerType.
+// If ccache is configured in the context, it prepends ccache to the compiler command.
+// This enables compiler caching for faster incremental builds.
 func ccCompilerCmd(ctx RuleRenderContext, compilerType string) string {
 	cc := ctx.CC
 	if compilerType == "cpp" {
@@ -32,6 +56,11 @@ func ccCompilerCmd(ctx RuleRenderContext, compilerType string) string {
 	return cc
 }
 
+// ltoFlags returns compiler and linker flags for Link Time Optimization (LTO).
+// LTO can be "full" for full LTO, "thin" for thin LTO, or "" for no LTO.
+// Full LTO provides maximum optimization but takes longer to build.
+// Thin LTO provides faster builds with good optimization.
+// Returns empty strings if LTO is not enabled.
 func ltoFlags(lto string) (compile string, link string) {
 	switch lto {
 	case "full":
@@ -43,6 +72,9 @@ func ltoFlags(lto string) (compile string, link string) {
 	}
 }
 
+// ltoArchiveCmd returns the archiver command for creating static libraries with LTO.
+// When LTO is enabled and the default ar is not suitable, it returns gcc-ar or llvm-ar.
+// This ensures proper LTO symbol resolution in static libraries.
 func ltoArchiveCmd(ar string, lto string) string {
 	if lto == "full" || lto == "thin" {
 		if strings.Contains(ar, "gcc-ar") || strings.Contains(ar, "llvm-ar") {
@@ -56,11 +88,33 @@ func ltoArchiveCmd(ar string, lto string) string {
 	return ar
 }
 
-// ccLibrary implements a C/C++ library rule that can be either static or shared.
+// ccLibrary implements a C/C++ library rule.
+// This is the main library type that produces either .a (static) or .so (shared) libraries.
+// The output type is determined by the "shared" boolean property on the module.
+//
+// NinjaRule generates these ninja rules:
+//   - cc_compile: Standard C/C++ compilation
+//   - cc_compile_lto: Compilation with LTO enabled
+//   - cc_archive: Archive object files into static library
+//   - cc_shared: Link object files into shared library
+//   - cc_link_lto: Link with LTO enabled
+//   - thinlto_codegen: Generate thin LTO intermediate files
+//
+// Outputs returns the library filename:
+//   - lib{name}{suffix}.so for shared libraries
+//   - lib{name}{suffix}.a for static libraries
 type ccLibrary struct{}
 
+// Name returns the module type name for cc_library.
 func (r *ccLibrary) Name() string { return "cc_library" }
 
+// NinjaRule defines the ninja compilation, archiving, and linking rules for C/C++ libraries.
+//
+// Parameters:
+//   - ctx: Rule render context with toolchain and flags
+//
+// Returns:
+//   - Ninja rule definitions as formatted string
 func (r *ccLibrary) NinjaRule(ctx RuleRenderContext) string {
 	arCmd := ltoArchiveCmd(ctx.AR, ctx.Lto)
 	ltoCompile, ltoLink := ltoFlags(ctx.Lto)
@@ -97,6 +151,10 @@ rule thinlto_codegen
 	return rules
 }
 
+// Outputs returns the library output paths.
+// For shared libraries (with "shared" property), returns lib{name}{suffix}.so.
+// For static libraries, returns lib{name}{suffix}.a.
+// Returns nil if the module has no name.
 func (r *ccLibrary) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 	name := getName(m)
 	if name == "" {
@@ -109,6 +167,11 @@ func (r *ccLibrary) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 	return []string{fmt.Sprintf("lib%s%s.a", name, suffix)}
 }
 
+// NinjaEdge generates ninja build edges for compiling source files and creating the library.
+// It compiles each source file to an object file, then archives or links them into the final library.
+// For shared libraries, it links object files into a shared object (.so).
+// For static libraries, it archives object files into a static archive (.a).
+// When LTO is "thin", it also generates thinlto_codegen edges for intermediate object files.
 func (r *ccLibrary) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 	name := getName(m)
 	srcs := getSrcs(m)
@@ -187,11 +250,25 @@ func (r *ccLibrary) Desc(m *parser.Module, srcFile string) string {
 	return "gcc"
 }
 
-// ccLibraryStatic implements a C static library rule (always produces .a).
+// ccLibraryStatic implements a C static library rule.
+// This module type always produces a .a (static) library, regardless of the shared property.
+//
+// NinjaRule generates these ninja rules:
+//   - cc_compile: Standard C compilation
+//   - cc_compile_lto: Compilation with LTO enabled
+//   - cc_archive: Archive object files into static library
 type ccLibraryStatic struct{}
 
+// Name returns the module type name for cc_library_static.
 func (r *ccLibraryStatic) Name() string { return "cc_library_static" }
 
+// NinjaRule defines the ninja compilation and archiving rules for static libraries.
+//
+// Parameters:
+//   - ctx: Rule render context with toolchain and flags
+//
+// Returns:
+//   - Ninja rule definitions as formatted string
 func (r *ccLibraryStatic) NinjaRule(ctx RuleRenderContext) string {
 	arCmd := ltoArchiveCmd(ctx.AR, ctx.Lto)
 	return fmt.Sprintf(`rule cc_compile
@@ -272,11 +349,26 @@ func (r *ccLibraryStatic) Desc(m *parser.Module, srcFile string) string {
 	return "gcc"
 }
 
-// ccLibraryShared implements a C shared library rule (always produces .so).
+// ccLibraryShared implements a C shared library rule.
+// This module type always produces a .so (shared) library.
+//
+// NinjaRule generates these ninja rules:
+//   - cc_compile: Standard C compilation
+//   - cc_compile_lto: Compilation with LTO enabled
+//   - cc_shared: Link object files into shared library
+//   - cc_link_lto: Link with LTO enabled
 type ccLibraryShared struct{}
 
+// Name returns the module type name for cc_library_shared.
 func (r *ccLibraryShared) Name() string { return "cc_library_shared" }
 
+// NinjaRule defines the ninja compilation and linking rules for shared libraries.
+//
+// Parameters:
+//   - ctx: Rule render context with toolchain and flags
+//
+// Returns:
+//   - Ninja rule definitions as formatted string
 func (r *ccLibraryShared) NinjaRule(ctx RuleRenderContext) string {
 	_, ltoLink := ltoFlags(ctx.Lto)
 	linkSuffix := ""
@@ -380,10 +472,23 @@ func (r *ccLibraryShared) Desc(m *parser.Module, srcFile string) string {
 }
 
 // ccObject implements a C object file rule.
+// This module type compiles source files to .o object files without creating a library.
+//
+// NinjaRule generates these ninja rules:
+//   - cc_compile: Standard C compilation
+//   - cc_compile_lto: Compilation with LTO enabled
 type ccObject struct{}
 
+// Name returns the module type name for cc_object.
 func (r *ccObject) Name() string { return "cc_object" }
 
+// NinjaRule defines the ninja compilation rules for object files.
+//
+// Parameters:
+//   - ctx: Rule render context with toolchain and flags
+//
+// Returns:
+//   - Ninja rule definitions as formatted string
 func (r *ccObject) NinjaRule(ctx RuleRenderContext) string {
 	return fmt.Sprintf(`rule cc_compile
  command = %s -c $in -o $out $flags -MMD -MF $out.d
@@ -454,10 +559,27 @@ func (r *ccObject) Desc(m *parser.Module, srcFile string) string {
 }
 
 // ccBinary implements a C/C++ binary rule.
+// This module type produces an executable binary from source files and dependencies.
+//
+// NinjaRule generates these ninja rules:
+//   - cc_compile: Standard C/C++ compilation
+//   - cc_compile_lto: Compilation with LTO enabled
+//   - cc_link: Link object files into executable
+//   - cc_link_lto: Link with LTO enabled
+//   - cc_archive: Archive object files for static libs
+//   - thinlto_codegen: Generate thin LTO intermediate files
 type ccBinary struct{}
 
+// Name returns the module type name for cc_binary.
 func (r *ccBinary) Name() string { return "cc_binary" }
 
+// NinjaRule defines the ninja compilation and linking rules for binaries.
+//
+// Parameters:
+//   - ctx: Rule render context with toolchain and flags
+//
+// Returns:
+//   - Ninja rule definitions as formatted string
 func (r *ccBinary) NinjaRule(ctx RuleRenderContext) string {
 	arCmd := ltoArchiveCmd(ctx.AR, ctx.Lto)
 	_, ltoLink := ltoFlags(ctx.Lto)
@@ -581,9 +703,18 @@ func (r *ccBinary) Desc(m *parser.Module, srcFile string) string {
 }
 
 // ccLibraryHeaders implements a C/C++ header library rule.
+// This module type provides header files for other modules to include.
+// It doesn't produce compiled output but exports include directories.
+//
+// NinjaRule returns empty string (no compilation rules needed).
+// NinjaEdge returns empty string (no build edges needed).
+// Outputs returns the header filename for dependency tracking.
 type ccLibraryHeaders struct{}
 
-func (r *ccLibraryHeaders) Name() string                           { return "cc_library_headers" }
+// Name returns the module type name for cc_library_headers.
+func (r *ccLibraryHeaders) Name() string { return "cc_library_headers" }
+
+// NinjaRule returns empty (no compilation needed for headers).
 func (r *ccLibraryHeaders) NinjaRule(ctx RuleRenderContext) string { return "" }
 func (r *ccLibraryHeaders) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 	name := getName(m)

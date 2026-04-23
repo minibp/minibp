@@ -49,6 +49,8 @@ Versioning adheres strictly to the 0.x scheme. The value of x is non-indicative 
 
 A change in the latest version number from 0.x to 1.0 shall signify the conclusion of all development and maintenance efforts for minibp. We appreciate your understanding regarding the inherent limitations of our time and capacity.
 
+Of course, there is an exception, which is if we decide to continue development, then the next time updates stop will be 1.x, and so on.
+
 ## 5. About the style
 
 You should run `go fmt` before you commit your code.
@@ -75,4 +77,4 @@ Please ensure that Java, GCC, G++, and Ninja-build are installed on the system.
 
 #### Why not go run ?
 
-The use of go run will cause ninja to be regenerated, subsequently leading to build errors. This approach is not recommended.
+Because if you use 'go run' to generate build.ninja, the minibp used to rebuild this target points to a temporary path like /tmp/go-build, which is unreliable.

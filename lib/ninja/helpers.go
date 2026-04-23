@@ -247,6 +247,7 @@ func staticLibOutputName(name string, archSuffix string) string {
 	return libOutputName(name, archSuffix, ".a")
 }
 
+// getFirstSource retrieves the first source file from a module.
 func getFirstSource(m *parser.Module) string {
 	srcs := getSrcs(m)
 	if len(srcs) == 0 {
@@ -255,10 +256,12 @@ func getFirstSource(m *parser.Module) string {
 	return srcs[0]
 }
 
+// getData retrieves data file paths from a module.
 func getData(m *parser.Module) []string {
 	return GetListProp(m, "data")
 }
 
+// copyCommand returns the platform-specific copy command for ninja.
 func copyCommand() string {
 	if runtime.GOOS == "windows" {
 		return "cmd /c copy $in $out"
@@ -266,10 +269,12 @@ func copyCommand() string {
 	return "cp $in $out"
 }
 
+// getTestOptionArgs retrieves test option arguments from a module.
 func getTestOptionArgs(m *parser.Module) string {
 	return strings.Join(GetMapStringListProp(GetMapProp(m, "test_options"), "args"), " ")
 }
 
+// GetMapProp retrieves a map property value from a module.
 func GetMapProp(m *parser.Module, name string) *parser.Map {
 	if m.Map == nil {
 		return nil
@@ -284,6 +289,7 @@ func GetMapProp(m *parser.Module, name string) *parser.Map {
 	return nil
 }
 
+// GetMapStringListProp retrieves a string list property from a map.
 func GetMapStringListProp(mp *parser.Map, name string) []string {
 	if mp == nil {
 		return nil
