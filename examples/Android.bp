@@ -109,8 +109,13 @@ cc_binary {
     srcs: ["demo.c"],
 }
 
+// Simple C demo with select arch
 cc_binary {
     name: "testapp",
+    cflags: select(os, {
+        "linux": ["-DLINUX"],
+        any @ my_os: ["-D" + my_os],
+    }),
     srcs: select((arch(), os()), {
         ("arm64", "linux"): ["arm64.c"],
         ("x86_64", "linux"): ["x64.c"],
