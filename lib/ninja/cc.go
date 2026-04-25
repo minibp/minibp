@@ -598,7 +598,9 @@ command = %s -c $in -o $out $flags -MMD -MF $out.d
 depfile = $out.d
 deps = gcc
 rule cc_link
-  command = ${CC} -o $out $in $flags%s
+ command = ${CC} -o $out @$out.rsp $flags%s
+ rspfile = $out.rsp
+ rspfile_content = $in
 rule cc_link_lto
 command = ${CC} -o $out $in $flags%s
 rule cc_archive
