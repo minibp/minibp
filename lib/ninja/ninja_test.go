@@ -621,9 +621,14 @@ func TestGeneratorCleanTargetUsesBuildOutputs(t *testing.T) {
 	}
 
 	output := buf.String()
-	// Note: clean target is disabled - users should use ninja -t clean instead
-	if strings.Contains(output, "rule clean") {
-		t.Fatalf("Unexpected clean rule in output (should use ninja -t clean): %s", output)
+	if !strings.Contains(output, "build all: phony") {
+		t.Fatalf("Expected all target in output: %s", output)
+	}
+	if !strings.Contains(output, "build clean: clean") {
+		t.Fatalf("Expected clean target in output: %s", output)
+	}
+	if !strings.Contains(output, "rule clean") {
+		t.Fatalf("Expected clean rule in output: %s", output)
 	}
 }
 

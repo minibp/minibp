@@ -156,10 +156,14 @@ func (r *ccLibrary) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 		return nil
 	}
 	suffix := ctx.ArchSuffix
-	if getBoolProp(m, "shared") {
-		return []string{fmt.Sprintf("lib%s%s.so", name, suffix)}
+	libName := name
+	if !strings.HasPrefix(name, "lib") {
+		libName = "lib" + name
 	}
-	return []string{fmt.Sprintf("lib%s%s.a", name, suffix)}
+	if getBoolProp(m, "shared") {
+		return []string{fmt.Sprintf("%s%s.so", libName, suffix)}
+	}
+	return []string{fmt.Sprintf("%s%s.a", libName, suffix)}
 }
 
 // NinjaEdge generates ninja build edges for compiling source files and creating the library.
@@ -285,7 +289,11 @@ func (r *ccLibraryStatic) Outputs(m *parser.Module, ctx RuleRenderContext) []str
 	if name == "" {
 		return nil
 	}
-	return []string{fmt.Sprintf("lib%s%s.a", name, ctx.ArchSuffix)}
+	libName := name
+	if !strings.HasPrefix(name, "lib") {
+		libName = "lib" + name
+	}
+	return []string{fmt.Sprintf("%s%s.a", libName, ctx.ArchSuffix)}
 }
 
 func (r *ccLibraryStatic) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
@@ -392,7 +400,11 @@ func (r *ccLibraryShared) Outputs(m *parser.Module, ctx RuleRenderContext) []str
 	if name == "" {
 		return nil
 	}
-	return []string{fmt.Sprintf("lib%s%s.so", name, ctx.ArchSuffix)}
+	libName := name
+	if !strings.HasPrefix(name, "lib") {
+		libName = "lib" + name
+	}
+	return []string{fmt.Sprintf("%s%s.so", libName, ctx.ArchSuffix)}
 }
 
 func (r *ccLibraryShared) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
@@ -586,9 +598,7 @@ command = %s -c $in -o $out $flags -MMD -MF $out.d
 depfile = $out.d
 deps = gcc
 rule cc_link
-command = ${CC} -o $out @$out.rsp $flags%s
-rspfile = $out.rsp
-rspfile_content = $in
+  command = ${CC} -o $out $in $flags%s
 rule cc_link_lto
 command = ${CC} -o $out $in $flags%s
 rule cc_archive

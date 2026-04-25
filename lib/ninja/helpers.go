@@ -210,14 +210,17 @@ func objectOutputName(moduleName, src string) string {
 	clean := filepath.Clean(src)
 	clean = strings.TrimPrefix(clean, "./")
 	clean = strings.TrimPrefix(clean, "../")
-	name := strings.TrimSuffix(clean, filepath.Ext(clean))
+	srcName := strings.TrimSuffix(clean, filepath.Ext(clean))
 	replacer := strings.NewReplacer("/", "_", "\\", "_", ":", "_", " ", "_")
-	name = replacer.Replace(name)
-	name = strings.Trim(name, "._")
-	if name == "" {
-		name = "obj"
+	srcName = replacer.Replace(srcName)
+	srcName = strings.Trim(srcName, "._")
+	if srcName == "" {
+		srcName = "obj"
 	}
-	return moduleName + "_" + name + ".o"
+	if strings.HasPrefix(srcName, moduleName) || srcName == moduleName {
+		return srcName + ".o"
+	}
+	return moduleName + "_" + srcName + ".o"
 }
 
 // joinFlags combines multiple flag strings into a single space-separated string.
@@ -234,7 +237,11 @@ func joinFlags(parts ...string) string {
 
 // libOutputName generates the output name for a library.
 func libOutputName(name, archSuffix, ext string) string {
-	return "lib" + name + archSuffix + ext
+	libName := name
+	if !strings.HasPrefix(name, "lib") {
+		libName = "lib" + name
+	}
+	return libName + archSuffix + ext
 }
 
 // sharedLibOutputName generates the output name for a shared library (.so).

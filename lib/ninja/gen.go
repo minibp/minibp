@@ -633,13 +633,7 @@ func (g *Generator) Generate(w io.Writer) error {
 
 				fmt.Fprint(w, g.adjustPaths(edgeDef))
 			}
-		}
-	}
-
-	// Clean target: disabled in DAG, use ninja -t clean instead
-	// The $TARGETS approach causes issues with ninja's DAG ordering
-	if len(allOutputs) > 0 {
-		// Disabled - use ninja -t clean instead
+}
 	}
 
 	for _, level := range levels {
@@ -691,6 +685,62 @@ func (g *Generator) Generate(w io.Writer) error {
 			}
 		}
 	}
+
+	// Collect all phony targets for 'all' target (excluding clean and modules without outputs)
+	allPhonyTargets := make([]string, 0)
+	for _, level := range levels {
+		for _, moduleName := range level {
+			m, ok := g.modules[moduleName]
+			if !ok || m == nil {
+				continue
+			}
+			// Skip if it would create a circular dependency or is a special module
+			if moduleName == "all" || moduleName == "clean" {
+				continue
+			}
+
+			rule, ok := g.rules[m.Type]
+			if !ok {
+				continue
+			}
+			outputs := rule.Outputs(m, g.ruleRenderContext())
+			if len(outputs) == 0 {
+				continue // Skip modules without outputs (e.g. headers, custom)
+			}
+			// Skip header-only libraries
+			if m.Type == "cc_library_headers" {
+				continue
+			}
+			phonyName := moduleName
+			archs := g.archsForModule(m)
+			if len(archs) > 1 {
+				for _, arch := range archs {
+					if arch != g.arch && arch != "" {
+						allPhonyTargets = append(allPhonyTargets, moduleName+"_"+arch)
+					}
+				}
+			}
+			allPhonyTargets = append(allPhonyTargets, phonyName)
+		}
+	}
+
+	// Remove duplicates
+	seen := make(map[string]bool)
+	uniqueTargets := make([]string, 0)
+	for _, t := range allPhonyTargets {
+		if !seen[t] {
+			seen[t] = true
+			uniqueTargets = append(uniqueTargets, t)
+		}
+	}
+
+	// Add 'all' target that depends on all other targets (excluding clean)
+	fmt.Fprintf(w, "build all: phony %s\n\n", strings.Join(uniqueTargets, " "))
+	fmt.Fprintf(w, "default all\n")
+
+	// Add 'clean' target that calls ninja -t clean
+	fmt.Fprintf(w, "rule ninja_clean\n command = ninja -t clean\n\n")
+	fmt.Fprintf(w, "build clean: ninja_clean\n")
 
 	return nil
 }
