@@ -624,11 +624,11 @@ func TestGeneratorCleanTargetUsesBuildOutputs(t *testing.T) {
 	if !strings.Contains(output, "build all: phony") {
 		t.Fatalf("Expected all target in output: %s", output)
 	}
-	if !strings.Contains(output, "build clean: ninja_clean") {
+	if !strings.Contains(output, "build clean: phony") {
 		t.Fatalf("Expected clean target in output: %s", output)
 	}
-	if !strings.Contains(output, "rule ninja_clean") {
-		t.Fatalf("Expected clean rule in output: %s", output)
+	if !strings.Contains(output, "build realclean: phony") {
+		t.Fatalf("Expected realclean target in output: %s", output)
 	}
 }
 

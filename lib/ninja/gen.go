@@ -433,93 +433,52 @@ func (g *Generator) Generate(w io.Writer) error {
 	}
 
 	ctx := g.ruleRenderContext()
-
 	usedModuleTypes := g.collectUsedModuleTypes()
-
 	writtenNinjaRules := make(map[string]bool)
 
 	for _, moduleType := range usedModuleTypes {
-
 		if rule, ok := g.rules[moduleType]; ok {
-
 			ruleDef := rule.NinjaRule(ctx)
-
 			if ruleDef == "" {
-
 				continue
-
 			}
 
 			// Split multiple rules in the same definition
-
 			// Each rule starts with "rule " prefix
-
 			lines := strings.Split(ruleDef, "\n")
-
 			var currentRuleName string
 
 			for i, line := range lines {
-
 				trimmed := strings.TrimSpace(line)
-
 				if trimmed == "" {
-
 					continue
-
 				}
-
 				// Check if this is a rule definition line
-
 				if strings.HasPrefix(trimmed, "rule ") {
-
 					// Extract rule name
-
 					parts := strings.Fields(trimmed)
-
 					if len(parts) >= 2 {
-
 						currentRuleName = parts[1]
-
 						// Skip if already written
-
 						if writtenNinjaRules[currentRuleName] {
-
 							currentRuleName = ""
-
 							continue
-
 						}
-
 						writtenNinjaRules[currentRuleName] = true
-
 					}
-
 				}
-
 				// Skip rule name line if we're skipping this rule
-
 				if currentRuleName == "" {
-
 					continue
-
 				}
-
 				// Add leading space for attribute lines (Ninja syntax requires this)
-
 				if i > 0 && !strings.HasPrefix(trimmed, "rule ") {
-
 					fmt.Fprintf(w, " %s\n", trimmed)
-
 				} else {
-
 					fmt.Fprintf(w, "%s\n", trimmed)
-
 				}
-
 			}
-
 		}
-
 	}
 
 	levels, err := g.graph.TopoSort()
@@ -638,7 +597,7 @@ func (g *Generator) Generate(w io.Writer) error {
 
 				fmt.Fprint(w, g.adjustPaths(edgeDef))
 			}
-}
+		}
 	}
 
 	for _, level := range levels {
@@ -741,11 +700,11 @@ func (g *Generator) Generate(w io.Writer) error {
 
 	// Add 'all' target that depends on all other targets (excluding clean)
 	fmt.Fprintf(w, "build all: phony %s\n\n", strings.Join(uniqueTargets, " "))
-	fmt.Fprintf(w, "default all\n")
+	fmt.Fprintf(w, "default all\n\n")
 
-	// Add 'clean' target that calls ninja -t clean
-	fmt.Fprintf(w, "rule ninja_clean\n command = ninja -t clean\n\n")
-	fmt.Fprintf(w, "build clean: ninja_clean\n")
+	// Add 'clean' target - removes build artifacts but preserves build.ninja
+	fmt.Fprintf(w, "rule CLEAN\n command = ninja -t clean && %s\n\n", ninjaEscape(g.regenCmd))
+	fmt.Fprintf(w, "build clean: CLEAN\n")
 
 	return nil
 }
