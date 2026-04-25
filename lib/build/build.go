@@ -28,7 +28,6 @@ import (
 // generation functions.
 type Options struct {
 	Arch     string   // Target architecture (e.g., "arm64", "x86_64", "arm")
-	Host     bool     // Whether building for host (true) or device (false); affects module filtering
 	SrcDir   string   // Source directory containing .bp files; used for glob expansion base
 	OutFile  string   // Output file path for generated ninja build file (usually "build.ninja")
 	Inputs   []string // Input .bp files or directories to scan; processed recursively
@@ -252,13 +251,13 @@ func CollectModules(allDefs []parser.Definition, eval *parser.Evaluator, opts Op
 		// Evaluate module expressions: substitutes variables, evaluates select()
 		eval.EvalModule(mod)
 		// Merge variant-specific properties (arm64, arm, x86_64, etc.)
-		variant.MergeVariantProps(mod, opts.Arch, opts.Host, eval)
+		variant.MergeVariantProps(mod, opts.Arch, true, eval)
 		// Expand globs (e.g., "*.java", "*.cpp") to concrete file lists
 		if err := glob.ExpandInModule(mod, opts.SrcDir); err != nil {
 			return nil, fmt.Errorf("error expanding globs for module %s: %w", name, err)
 		}
 		// Filter modules by host_supported/device_supported
-		if !variant.IsModuleEnabledForTarget(mod, opts.Host) {
+		if !variant.IsModuleEnabledForTarget(mod, true) {
 			continue
 		}
 		modules[name] = mod
@@ -304,11 +303,11 @@ func CollectModulesWithNames(
 			continue
 		}
 		eval.EvalModule(mod)
-		variant.MergeVariantProps(mod, opts.Arch, opts.Host, eval)
+		variant.MergeVariantProps(mod, opts.Arch, true, eval)
 		if err := glob.ExpandInModule(mod, opts.SrcDir); err != nil {
 			return nil, fmt.Errorf("error expanding globs for module %s: %w", name, err)
 		}
-		if !variant.IsModuleEnabledForTarget(mod, opts.Host) {
+		if !variant.IsModuleEnabledForTarget(mod, true) {
 			continue
 		}
 		modules[name] = mod
@@ -476,9 +475,6 @@ func buildRegenCmd(opts Options) string {
 	regenCmd := os.Args[0]
 	if opts.Arch != "" {
 		regenCmd += " -arch " + opts.Arch
-	}
-	if opts.Host {
-		regenCmd += " -host"
 	}
 	// Add -a flag if scanning a directory
 	if len(opts.Inputs) == 1 {

@@ -76,7 +76,6 @@ type RunConfig struct {
 	AR          string   // Archiver path (default: ar)
 	Arch        string   // Target architecture (arm, arm64, x86, x86_64)
 	Multilib    []string // Comma-separated target architectures for multi-arch build
-	Host        bool     // Whether to build for host (overrides arch)
 	TargetOS    string   // Target OS (linux, darwin, windows)
 	Variant     string   // Comma-separated variant selectors
 	Product     string   // Comma-separated product variables
@@ -134,7 +133,6 @@ func ParseRunConfig(args []string, stderr io.Writer) (RunConfig, error) {
 	arFlag := fs.String("ar", "", "archiver (default: ar)")
 	archFlag := fs.String("arch", "", "target architecture (arm, arm64, x86, x86_64)")
 	multilibFlag := fs.String("multilib", "", "comma-separated target architectures for multi-arch build (e.g. arm64,x86_64)")
-	hostFlag := fs.Bool("host", false, "build for host (overrides arch)")
 	osFlag := fs.String("os", "", "target OS (linux, darwin, windows)")
 	variantFlag := fs.String("variant", "", "comma-separated variant selectors (e.g. image=recovery,link=shared)")
 	productFlag := fs.String("product", "", "comma-separated product variables (e.g. debuggable=true,board=soc_a)")
@@ -158,7 +156,6 @@ func ParseRunConfig(args []string, stderr io.Writer) (RunConfig, error) {
 		AR:          *arFlag,
 		Arch:        *archFlag,
 		Multilib:    splitCSV(*multilibFlag),
-		Host:        *hostFlag,
 		TargetOS:    *osFlag,
 		Variant:     *variantFlag,
 		Product:     *productFlag,
@@ -194,15 +191,14 @@ func ParseRunConfig(args []string, stderr io.Writer) (RunConfig, error) {
 func NewEvaluatorFromConfig(cfg RunConfig) *parser.Evaluator {
 	eval := parser.NewEvaluator()
 	
-	// When -host is set, use the current system's architecture
-	// This allows select((arch(), os()), ...) to work with -host
-	arch := cfg.Arch
-	if cfg.Host {
-		arch = runtime.GOARCH
+	// Default to current system architecture (host build)
+	arch := runtime.GOARCH
+	if cfg.Arch != "" {
+		arch = cfg.Arch
 	}
 	
 	eval.SetConfig("arch", arch)
-	eval.SetConfig("host", fmt.Sprintf("%v", cfg.Host))
+	eval.SetConfig("host", "true")
 	if cfg.TargetOS != "" {
 		eval.SetConfig("os", cfg.TargetOS)
 	} else {
@@ -238,9 +234,12 @@ func NewEvaluatorFromConfig(cfg RunConfig) *parser.Evaluator {
 // only used by the Evaluator during Blueprint parsing, not by the build
 // pipeline which operates on resolved module values.
 func (cfg RunConfig) BuildOptions() buildlib.Options {
+	arch := runtime.GOARCH
+	if cfg.Arch != "" {
+		arch = cfg.Arch
+	}
 	return buildlib.Options{
-		Arch:     cfg.Arch,
-		Host:     cfg.Host,
+		Arch:     arch,
 		SrcDir:   cfg.SrcDir,
 		OutFile:  cfg.OutFile,
 		Inputs:   append([]string(nil), cfg.Inputs...),

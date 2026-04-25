@@ -168,7 +168,6 @@ func TestParseRunConfigWithFlags(t *testing.T) {
 	cfg, err := ParseRunConfig([]string{
 		"-o", "out.ninja",
 		"-arch", "arm64",
-		"-host",
 		"-os", "linux",
 		"-cc", "clang",
 		"-cxx", "clang++",
@@ -188,9 +187,6 @@ func TestParseRunConfigWithFlags(t *testing.T) {
 	}
 	if cfg.Arch != "arm64" {
 		t.Errorf("expected arch arm64, got %q", cfg.Arch)
-	}
-	if !cfg.Host {
-		t.Error("expected host true")
 	}
 	if cfg.TargetOS != "linux" {
 		t.Errorf("expected os linux, got %q", cfg.TargetOS)
@@ -277,7 +273,6 @@ func TestNewEvaluatorFromConfigVariant(t *testing.T) {
 func TestBuildOptionsCopiesFields(t *testing.T) {
 	cfg := RunConfig{
 		Arch:     "arm64",
-		Host:     true,
 		SrcDir:   "/src",
 		OutFile:  "build.ninja",
 		Inputs:   []string{"Android.bp"},
@@ -292,7 +287,6 @@ func TestBuildOptionsCopiesFields(t *testing.T) {
 	opts := cfg.BuildOptions()
 	want := buildlib.Options{
 		Arch:     "arm64",
-		Host:     true,
 		SrcDir:   "/src",
 		OutFile:  "build.ninja",
 		Inputs:   []string{"Android.bp"},
