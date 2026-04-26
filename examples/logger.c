@@ -48,8 +48,21 @@ static void log_message(int level, const char* level_str, const char* format, va
     
     va_list args_copy;
     va_copy(args_copy, args);
-    vfprintf(output, format, args_copy);
+    
+    // Determine the length of the formatted message
+    int len = vsnprintf(NULL, 0, format, args_copy);
     va_end(args_copy);
+
+    if (len >= 0) {
+        // Allocate buffer and format the message
+        char* buffer = malloc(len + 1);
+        if (buffer) {
+            vsnprintf(buffer, len + 1, format, args);
+            fprintf(output, "%s", buffer);
+            free(buffer);
+        }
+    }
+
     fprintf(output, "\n");
     
     if (log_file) {

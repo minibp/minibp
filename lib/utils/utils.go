@@ -14,11 +14,25 @@ import (
 	"runtime"
 	"strings"
 
-	buildlib "minibp/lib/build"
 	"minibp/lib/parser"
 	"minibp/lib/version"
 )
 
+// BuildOptions is a local copy of build.Options to avoid import cycles.
+type BuildOptions struct {
+	Arch     string
+	SrcDir   string
+	OutFile  string
+	Inputs   []string
+	Multilib []string
+	CC       string
+	CXX      string
+	AR       string
+	LTO      string
+	Sysroot  string
+	Ccache   string
+	TargetOS string
+}
 // RunConfig holds the command-line configuration for a minibp execution.
 // It encapsulates all flag values and derived settings needed to parse
 // Blueprint files and generate Ninja build rules.
@@ -224,11 +238,11 @@ func NewEvaluatorFromConfig(cfg RunConfig) *parser.Evaluator {
 	return eval
 }
 
-// BuildOptions converts the RunConfig into buildlib.Options used by the
+// BuildOptions converts the RunConfig into BuildOptions used by the
 // build pipeline.
 //
 // This method copies all relevant configuration from RunConfig to the
-// buildlib.Options struct, which drives the module collection and ninja
+// BuildOptions struct, which drives the module collection and ninja
 // generation stages. The inputs and multilib slices are copied to prevent
 // mutation of the original config.
 //
@@ -247,12 +261,12 @@ func NewEvaluatorFromConfig(cfg RunConfig) *parser.Evaluator {
 // Note: Variant and Product selectors are NOT copied here because they are
 // only used by the Evaluator during Blueprint parsing, not by the build
 // pipeline which operates on resolved module values.
-func (cfg RunConfig) BuildOptions() buildlib.Options {
+func (cfg RunConfig) BuildOptions() BuildOptions {
 	arch := runtime.GOARCH
 	if cfg.Arch != "" {
 		arch = cfg.Arch
 	}
-	return buildlib.Options{
+	return BuildOptions{
 		Arch:     arch,
 		SrcDir:   cfg.SrcDir,
 		OutFile:  cfg.OutFile,
@@ -456,5 +470,20 @@ func setKeyValueConfigs(eval *parser.Evaluator, prefix, raw string) {
 			continue
 		}
 		eval.SetConfig(prefix+key, val)
+	}
+}
+
+// SanitizePath removes '..' from a path to prevent directory traversal.
+// It repeatedly replaces "../" and "..\" with an empty string until no
+// more occurrences are found. This is a simple but effective way to
+// mitigate path traversal vulnerabilities.
+func SanitizePath(path string) string {
+	for {
+		cleaned := strings.ReplaceAll(path, "../", "")
+		cleaned = strings.ReplaceAll(cleaned, "..\\", "")
+		if cleaned == path {
+			return cleaned
+		}
+		path = cleaned
 	}
 }

@@ -145,16 +145,21 @@ func ninjaEscapePath(s string) string {
 	return strings.ReplaceAll(ninjaEscape(s), " ", "$ ")
 }
 
+// shellEscape escapes a string for safe inclusion in a shell command.
+// It wraps the string in single quotes and escapes any contained single quotes.
+// This prevents the shell from interpreting special characters in the string.
 func shellEscape(s string) string {
 	if s == "" {
 		return "''"
 	}
+	// Check if the string contains any characters that need escaping.
+	// This is a performance optimization to avoid unnecessary allocation.
 	needsEscape := false
-	for _, c := range s {
-		if c == '\'' || c == '"' || c == '\\' || c == '$' || c == '`' ||
-			c == '!' || c == '|' || c == '&' || c == ';' || c == '<' || c == '>' ||
-			c == '(' || c == ')' || c == '[' || c == ']' || c == '{' || c == '}' ||
-			c == '~' || c == '*' || c == '?' || c == '#' || c == '\n' || c == '\r' {
+	for _, r := range s {
+		if r == '\'' || r == '"' || r == '\\' || r == '$' || r == '`' ||
+			r == '!' || r == '|' || r == '&' || r == ';' || r == '<' || r == '>' ||
+			r == '(' || r == ')' || r == '[' || r == ']' || r == '{' || r == '}' ||
+			r == '~' || r == '*' || r == '?' || r == '#' || r == '\n' || r == '\r' {
 			needsEscape = true
 			break
 		}
@@ -162,6 +167,10 @@ func shellEscape(s string) string {
 	if !needsEscape {
 		return s
 	}
+
+	// The logic for escaping is to replace every ' with '\''
+	// and then wrap the entire string in single quotes.
+	// For example, "it's a trap" becomes "'it'\\''s a trap'".
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 

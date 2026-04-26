@@ -13,6 +13,7 @@ import (
 	"minibp/lib/parser"
 	"minibp/lib/props"
 	applib "minibp/lib/utils"
+	"path/filepath"
 )
 
 // Dependency injection points for file operations.
@@ -20,7 +21,15 @@ import (
 var (
 	// openInputFile opens a file for reading.
 	// Used for dependency injection in tests.
-	openInputFile func(path string) (io.ReadCloser, error) = func(path string) (io.ReadCloser, error) { return os.Open(path) }
+	openInputFile func(path string) (io.ReadCloser, error) = func(path string) (io.ReadCloser, error) {
+		// Sanitize path to prevent directory traversal attacks.
+		// This ensures that files outside the intended directory cannot be accessed.
+		cleanPath := applib.SanitizePath(path)
+		if cleanPath != path {
+			return nil, fmt.Errorf("invalid path: contains '..'")
+		}
+		return os.Open(filepath.Clean(path))
+	}
 
 	// createOutputFile creates a file for writing.
 	// Used for dependency injection in tests.
@@ -96,7 +105,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	//   - Architecture variant filtering (arm64, arm, x86_64, etc.)
 	//   - host_supported/device_supported filtering
 	// Returns all modules that match the current build configuration.
-	buildOpts := cfg.BuildOptions()
+	buildOpts := toBuildOptions(cfg.BuildOptions())
 	modules, err := buildlib.CollectModulesWithNames(allDefs, eval, buildOpts, func(m *parser.Module, name string) string {
 		return props.GetStringPropEval(m, name, eval)
 	})
@@ -145,6 +154,24 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 	fmt.Fprintf(stdout, "Generated %s with %d modules\n", cfg.OutFile, len(modules))
 	return nil
+}
+
+// toBuildOptions converts applib.BuildOptions to buildlib.Options.
+func toBuildOptions(opts applib.BuildOptions) buildlib.Options {
+	return buildlib.Options{
+		Arch:     opts.Arch,
+		SrcDir:   opts.SrcDir,
+		OutFile:  opts.OutFile,
+		Inputs:   opts.Inputs,
+		Multilib: opts.Multilib,
+		CC:       opts.CC,
+		CXX:      opts.CXX,
+		AR:       opts.AR,
+		LTO:      opts.LTO,
+		Sysroot:  opts.Sysroot,
+		Ccache:   opts.Ccache,
+		TargetOS: opts.TargetOS,
+	}
 }
 
 // parseDefinitionsFromFiles reads and parses all Blueprint files.

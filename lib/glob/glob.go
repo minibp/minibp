@@ -26,6 +26,13 @@ import (
 	"strings"
 )
 
+var (
+	// globCache stores the results of glob expansions to avoid redundant filesystem scans.
+	// The key is the glob pattern, and the value is the list of matching file paths.
+	// This cache is populated by ExpandGlobs and checked by ExpandInModule.
+	globCache = make(map[string][]string)
+)
+
 // ExpandInModule expands glob patterns in the "srcs" property of a module.
 // It processes each source file pattern in the module's srcs list and expands
 // glob patterns (using * and **) into matching file paths.
@@ -63,32 +70,37 @@ func ExpandInModule(m *parser.Module, baseDir string) error {
 	if m.Map == nil {
 		return nil
 	}
-	// Iterate through module properties to find "srcs"
 	for _, prop := range m.Map.Properties {
 		if prop.Name == "srcs" {
-			// Verify srcs is a list type
 			if l, ok := prop.Value.(*parser.List); ok {
 				var expandedSrcs []parser.Expression
-				// Track seen paths for deduplication
 				seen := make(map[string]bool)
 				for _, v := range l.Values {
 					if s, ok := v.(*parser.String); ok {
 						pattern := s.Value
-						// Check if pattern contains glob characters
 						if strings.Contains(pattern, "*") {
-							matches, err := expandGlob(pattern, baseDir)
-							if err != nil {
-								return err
-							}
-							// Add expanded matches, deduplicating
-							for _, match := range matches {
-								if !seen[match] {
-									seen[match] = true
-									expandedSrcs = append(expandedSrcs, &parser.String{Value: match})
+							// Check cache first
+							if matches, ok := globCache[pattern]; ok {
+								for _, match := range matches {
+									if !seen[match] {
+										seen[match] = true
+										expandedSrcs = append(expandedSrcs, &parser.String{Value: match})
+									}
+								}
+							} else {
+								// Fallback to individual expansion if not in cache
+								matches, err := expandGlob(pattern, baseDir)
+								if err != nil {
+									return err
+								}
+								for _, match := range matches {
+									if !seen[match] {
+										seen[match] = true
+										expandedSrcs = append(expandedSrcs, &parser.String{Value: match})
+									}
 								}
 							}
 						} else {
-							// Non-glob pattern: add directly if not seen
 							if !seen[pattern] {
 								seen[pattern] = true
 								expandedSrcs = append(expandedSrcs, v)
@@ -96,13 +108,58 @@ func ExpandInModule(m *parser.Module, baseDir string) error {
 						}
 					}
 				}
-				// Replace original srcs with expanded list
 				l.Values = expandedSrcs
 			}
 		}
 	}
 	return nil
 }
+
+// ExpandGlobs performs a global expansion of all glob patterns from all modules.
+// It collects all unique glob patterns from the "srcs" property of every module,
+// expands them in a single pass, and caches the results in globCache.
+// This is much more efficient than expanding globs for each module individually.
+//
+// Parameters:
+//   - modules: A map of all modules to process.
+//   - baseDir: The base directory for resolving glob patterns.
+//
+// Returns:
+//   - error: Any error encountered during glob expansion.
+func ExpandGlobs(modules map[string]*parser.Module, baseDir string) error {
+	patterns := make(map[string]bool)
+	for _, m := range modules {
+		if m.Map == nil {
+			continue
+		}
+		for _, prop := range m.Map.Properties {
+			if prop.Name == "srcs" {
+				if l, ok := prop.Value.(*parser.List); ok {
+					for _, v := range l.Values {
+						if s, ok := v.(*parser.String); ok {
+							if strings.Contains(s.Value, "*") {
+								patterns[s.Value] = true
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	for pattern := range patterns {
+		if _, ok := globCache[pattern]; !ok {
+			matches, err := expandGlob(pattern, baseDir)
+			if err != nil {
+				return err
+			}
+			globCache[pattern] = matches
+		}
+	}
+
+	return nil
+}
+
 
 // expandGlob expands a single glob pattern into a list of matching file paths.
 // It handles two types of patterns:

@@ -695,12 +695,19 @@ func (g *Generator) Generate(w io.Writer) error {
 	fmt.Fprintf(w, "default all\n\n")
 
 	// Add 'clean' target - removes build artifacts but preserves build.ninja
-	if g.regenCmd != "" {
-		fmt.Fprintf(w, "rule CLEAN\n command = ninja -t clean && %s\n\n", ninjaEscape(g.regenCmd))
-	} else {
-		fmt.Fprintf(w, "rule CLEAN\n command = ninja -t clean\n\n")
+	if len(allOutputs) > 0 {
+		// The command for the CLEAN rule needs to handle the case where regenCmd is empty.
+		// If regenCmd is not empty, it should be properly escaped.
+		cleanCmd := "ninja -t clean"
+		if g.regenCmd != "" {
+			// Escape the regen command to prevent command injection.
+			escapedRegenCmd := shellEscape(g.regenCmd)
+			cleanCmd += " && " + escapedRegenCmd
+		}
+
+		fmt.Fprintf(w, "rule CLEAN\n command = %s\n\n", cleanCmd)
+		fmt.Fprintf(w, "build clean: CLEAN\n")
 	}
-	fmt.Fprintf(w, "build clean: CLEAN\n")
 
 	return nw.Flush()
 }

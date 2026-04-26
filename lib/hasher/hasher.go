@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"minibp/lib/parser"
+	"sync"
 )
 
 // Hasher calculates and stores hashes for modules.
@@ -241,40 +242,65 @@ func (h *Hasher) extractProperties(module *parser.Module) []string {
 	return props
 }
 
-// hashSourceFiles hashes the content of source files.
+// hashSourceFiles hashes the content of source files in parallel.
 //
-// This function expands glob patterns and computes SHA256 hashes for each source file.
-// The hash includes both the file path (to detect moves/renames) and file content
-// (to detect modifications).
+// This function uses a worker pool to concurrently hash all source files,
+// which can significantly speed up the process on multi-core systems.
+// The number of concurrent workers is limited to avoid overwhelming the system.
 //
 // Parameters:
-//   - module: The module to hash source files for
-//   - w: Writer to write the hash input to
+//   - module: The module to hash source files for.
+//   - w: Writer to write the hash input to.
 //
 // Returns:
-//   - error: Non-nil if file operations fail
-//
-// Edge cases:
-//   - Missing source files are silently ignored (assumed generated during build)
-//   - Glob patterns that don't match any files produce no entries
-//   - Files are processed in sorted order for determinism
-//   - File read errors (other than "not found") are returned as errors
+//   - error: Non-nil if any file operations fail.
 func (h *Hasher) hashSourceFiles(module *parser.Module, w io.Writer) error {
 	srcs := h.getSourceFiles(module)
-
-	// Sort for consistency.
-	// Alphabetical sorting ensures the same file set produces the same hash
-	// regardless of declaration order.
 	sort.Strings(srcs)
 
+	var wg sync.WaitGroup
+	// Limit concurrency to avoid too many open files.
+	sem := make(chan struct{}, 32)
+	// Channel to collect results and errors.
+	results := make(chan struct {
+		hash string
+		err  error
+	}, len(srcs))
+
 	for _, src := range srcs {
-		if err := h.hashFile(src, w); err != nil {
-			// Ignore "file not found" errors.
-			// Generated source files may not exist yet during early build stages.
-			if !os.IsNotExist(err) {
-				return err
+		wg.Add(1)
+		go func(src string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			hash, err := h.hashFile(src)
+			results <- struct {
+				hash string
+				err  error
+			}{hash, err}
+		}(src)
+	}
+
+	wg.Wait()
+	close(results)
+
+	// Process results.
+	var fileHashes []string
+	for res := range results {
+		if res.err != nil {
+			if !os.IsNotExist(res.err) {
+				return res.err
 			}
+			continue
 		}
+		fileHashes = append(fileHashes, res.hash)
+	}
+
+	// Sort hashes for deterministic output.
+	sort.Strings(fileHashes)
+	for _, hash := range fileHashes {
+		fmt.Fprint(w, hash)
 	}
 
 	return nil
@@ -282,35 +308,29 @@ func (h *Hasher) hashSourceFiles(module *parser.Module, w io.Writer) error {
 
 // hashFile calculates the hash of a single file.
 //
-// This function writes two components to the hasher:
-//  1. The file path: "file:/path/to/file;"
-//  2. The file content hash: "hash:abc123...;"
-//
-// Including the path ensures that file renames produce different hashes.
-// Including the content ensures that file modifications produce different hashes.
+// This function returns a formatted string containing the file path and its
+// content hash, suitable for writing to the main module hasher.
 //
 // Parameters:
-//   - path: Absolute or relative path to the file
-//   - w: Writer to write the hash input to
+//   - path: Absolute or relative path to the file.
 //
 // Returns:
-//   - error: Non-nil if file cannot be opened or read
-func (h *Hasher) hashFile(path string, w io.Writer) error {
+//   - string: A formatted string "file:<path>;hash:<hash>;".
+//   - error: Non-nil if file cannot be opened or read.
+func (h *Hasher) hashFile(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer f.Close()
 
-	fmt.Fprintf(w, "file:%s;", path)
-
 	fileHasher := sha256.New()
 	if _, err := io.Copy(fileHasher, bufio.NewReaderSize(f, 32*1024)); err != nil {
-		return err
+		return "", err
 	}
 
-	fmt.Fprintf(w, "hash:%s;", hex.EncodeToString(fileHasher.Sum(nil)))
-	return nil
+	hash := hex.EncodeToString(fileHasher.Sum(nil))
+	return fmt.Sprintf("file:%s;hash:%s;", path, hash), nil
 }
 
 // getModuleName extracts the name from a module.

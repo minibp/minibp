@@ -31,6 +31,7 @@ package ninja
 import (
 	"fmt"
 	"minibp/lib/parser"
+	"minibp/lib/utils"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -112,7 +113,10 @@ func (r *filegroup) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 	// Filegroup just copies files to output directory
 	var edges strings.Builder
 	for _, src := range srcs {
-		out := filepath.Join(name, filepath.Base(src))
+		// Sanitize both module name and source filename to prevent path traversal
+		safeName := utils.SanitizePath(name)
+		safeSrc := utils.SanitizePath(filepath.Base(src))
+		out := filepath.Join(safeName, safeSrc)
 		edges.WriteString(fmt.Sprintf("build %s: filegroup_copy %s\n", out, src))
 	}
 	return edges.String()

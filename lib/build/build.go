@@ -138,79 +138,62 @@ func (g *Graph) AddEdge(from, to string) {
 //   - Circular dependencies return error with "circular dependency detected"
 //   - Missing modules return descriptive error naming the missing module
 func (g *Graph) TopoSort() ([][]string, error) {
-	// Step 1: Initialize in-degree map with all nodes at 0.
-	// Every node starts with no incoming edges.
+	// Step 1: Initialize in-degree map and reverse edges map.
 	inDegree := make(map[string]int)
+	reverseEdges := make(map[string][]string)
 	for name := range g.nodes {
 		inDegree[name] = 0
 	}
 
-	// Step 2: Count in-degrees by iterating over all edges.
-	// For each edge from A to B, B has one more incoming edge.
 	for from, deps := range g.edges {
-		// Verify source module exists in the graph.
-		// This catches references to modules that were never added as nodes.
 		if _, ok := g.nodes[from]; !ok {
 			return nil, fmt.Errorf("module '%s' referenced in dependency graph does not exist", from)
 		}
 		for _, to := range deps {
-			// Verify target module exists in the graph.
-			// This catches undefined dependencies.
 			if _, ok := g.nodes[to]; !ok {
 				return nil, fmt.Errorf("dependency '%s' of '%s' not found", to, from)
 			}
-			inDegree[from]++ // Actually counting outgoing edges here - corrected below
+			inDegree[to]++
+			reverseEdges[from] = append(reverseEdges[from], to)
 		}
 	}
 
-	// Fix: The original code incremented inDegree[from] but should increment for the target.
-	// Correct version: build reverse edges map for dependency tracking.
-	reverseEdges := make(map[string][]string)
-	for from, deps := range g.edges {
-		for _, to := range deps {
-			reverseEdges[to] = append(reverseEdges[to], from)
+	// Step 2: Initialize the queue with all nodes having an in-degree of 0.
+	var queue []string
+	for name, degree := range inDegree {
+		if degree == 0 {
+			queue = append(queue, name)
 		}
 	}
+	sort.Strings(queue)
 
-	// Rebuild proper in-degree count based on reverse edges (incoming dependencies).
-	// inDegree[X] = number of modules that X depends on.
-	inDegree = make(map[string]int)
-	for name := range g.nodes {
-		inDegree[name] = 0
-	}
-	for from, deps := range g.edges {
-		inDegree[from] = len(deps)
-	}
-
-	// Step 3-4: Process levels by finding nodes with in-degree 0.
 	var levels [][]string
-	visited := make(map[string]bool)
-	for len(visited) < len(g.nodes) {
-		// Find all nodes with no remaining dependencies.
-		var currentLevel []string
-		for name, degree := range inDegree {
-			if degree == 0 && !visited[name] {
-				currentLevel = append(currentLevel, name)
-			}
-		}
-
-		// No nodes with in-degree 0 means circular dependency.
-		if len(currentLevel) == 0 {
-			return nil, fmt.Errorf("circular dependency detected")
-		}
-
-		// Sort for deterministic build order.
-		sort.Strings(currentLevel)
+	visitedCount := 0
+	for len(queue) > 0 {
+		// Current level consists of all nodes in the queue.
+		currentLevel := make([]string, len(queue))
+		copy(currentLevel, queue)
 		levels = append(levels, currentLevel)
+		visitedCount += len(queue)
 
-		// Mark these nodes as visited and decrease dependents' in-degree.
-		for _, name := range currentLevel {
-			visited[name] = true
-			// For each module that depends on this one, decrement its in-degree.
-			for _, dependent := range reverseEdges[name] {
-				inDegree[dependent]--
+		// Prepare the next level's queue.
+		nextQueue := []string{}
+		for _, u := range queue {
+			// For each neighbor of u, decrement its in-degree.
+			for _, v := range reverseEdges[u] {
+				inDegree[v]--
+				if inDegree[v] == 0 {
+					nextQueue = append(nextQueue, v)
+				}
 			}
 		}
+		sort.Strings(nextQueue)
+		queue = nextQueue
+	}
+
+	if visitedCount != len(g.nodes) {
+		// If not all nodes were visited, there must be a cycle.
+		return nil, fmt.Errorf("circular dependency detected")
 	}
 
 	return levels, nil
@@ -238,29 +221,19 @@ func (g *Graph) TopoSort() ([][]string, error) {
 //   - map[string]*parser.Module: Map of module name to definition
 //   - error: Glob expansion failure, or other evaluation errors
 func CollectModules(allDefs []parser.Definition, eval *parser.Evaluator, opts Options) (map[string]*parser.Module, error) {
-	modules := make(map[string]*parser.Module)
-	for _, def := range allDefs {
-		mod, ok := def.(*parser.Module)
-		if !ok {
-			continue // Skip non-module definitions (e.g., soong_namespace)
-		}
-		name := props.GetStringPropEval(mod, "name", eval)
-		if name == "" {
-			continue // Skip modules without names
-		}
-		// Evaluate module expressions: substitutes variables, evaluates select()
-		eval.EvalModule(mod)
-		// Merge variant-specific properties (arm64, arm, x86_64, etc.)
-		variant.MergeVariantProps(mod, opts.Arch, true, eval)
-		// Expand globs (e.g., "*.java", "*.cpp") to concrete file lists
+	modules, err := CollectModulesWithNames(allDefs, eval, opts, nil)
+	if err != nil {
+		return nil, err
+	}
+	// After collecting all modules, perform a single global glob expansion.
+	if err := glob.ExpandGlobs(modules, opts.SrcDir); err != nil {
+		return nil, fmt.Errorf("error during global glob expansion: %w", err)
+	}
+	// Now that globs are cached, expand them in each module.
+	for name, mod := range modules {
 		if err := glob.ExpandInModule(mod, opts.SrcDir); err != nil {
 			return nil, fmt.Errorf("error expanding globs for module %s: %w", name, err)
 		}
-		// Filter modules by host_supported/device_supported
-		if !variant.IsModuleEnabledForTarget(mod, true) {
-			continue
-		}
-		modules[name] = mod
 	}
 	return modules, nil
 }
@@ -289,7 +262,9 @@ func CollectModulesWithNames(
 ) (map[string]*parser.Module, error) {
 	// Use default name extraction if custom function not provided.
 	if nameFunc == nil {
-		nameFunc = props.GetStringProp
+		nameFunc = func(m *parser.Module, key string) string {
+			return props.GetStringPropEval(m, key, eval)
+		}
 	}
 
 	modules := make(map[string]*parser.Module)
@@ -304,14 +279,26 @@ func CollectModulesWithNames(
 		}
 		eval.EvalModule(mod)
 		variant.MergeVariantProps(mod, opts.Arch, true, eval)
-		if err := glob.ExpandInModule(mod, opts.SrcDir); err != nil {
-			return nil, fmt.Errorf("error expanding globs for module %s: %w", name, err)
-		}
+		// We will expand globs later, in a single pass.
 		if !variant.IsModuleEnabledForTarget(mod, true) {
 			continue
 		}
 		modules[name] = mod
 	}
+
+	// Perform a single global glob expansion pass.
+	if err := glob.ExpandGlobs(modules, opts.SrcDir); err != nil {
+		return nil, fmt.Errorf("error during global glob expansion: %w", err)
+	}
+
+	// Now apply the cached globs to each module.
+	for _, mod := range modules {
+		if err := glob.ExpandInModule(mod, opts.SrcDir); err != nil {
+			name := nameFunc(mod, "name")
+			return nil, fmt.Errorf("error expanding globs for module %s: %w", name, err)
+		}
+	}
+
 	return modules, nil
 }
 
