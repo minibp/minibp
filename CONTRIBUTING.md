@@ -10,16 +10,9 @@ Please note that **we do not track changes to CONTRIBUTING.md, so kindly keep th
 
 ## 1. About the AI code
 
-We accept the use of AI-assisted or AI-generated code. While AI is fast and capable, we still expect that:  
+See [ai part of tree-sitter contributing guide](https://github.com/tree-sitter/tree-sitter/blob/475c48d1e3140540296cce87eb5ab1e8160d5d17/docs/src/6-contributing.md#ai-policy)
 
-- 1. You should understand at least half or all of the logic, and be aware of how AI-written code may impact the system.  
-
-- 2. Follow our coding standards.
-
-- 3. For PRs initiated by an AI Agent, we **must know** who **instructed** the AI Agent to initiate it.
-
-- 4. For a large number (>=5) of malicious AI-generated PRs, we will close them directly because we feel that you have no sincerity at all and just hope to gain community honor and praise without putting in any effort (which doesn't seem quite right, at least the people who initiated these have spent money, whether implicitly or explicitly).
-
+Extra: For a large number (>=5) of malicious AI-generated PRs, we will close them directly because we feel that you have no sincerity at all and just hope to gain community honor and praise without putting in any effort (which doesn't seem quite right, at least the people who initiated these have spent money, whether implicitly or explicitly).
 
 ## 2. About the commit
 
