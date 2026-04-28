@@ -325,6 +325,13 @@ rule go_link
 //   - Empty name: Returns nil (cannot determine output path)
 //   - No cross-compilation: Returns "{name}" without suffix
 //   - Cross-compilation: Returns both ["{name}_{host_os}_{host_arch}", "{name}_{target_os}_{target_arch}"]
+func outputNameForGoBinary(name, goos, goarch string) string {
+	if goos == "windows" {
+		return name + "_" + goos + "_" + goarch + ".exe"
+	}
+	return name + "_" + goos + "_" + goarch
+}
+
 func (r *goBinary) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 	name := getName(m)
 	if name == "" {
@@ -334,9 +341,9 @@ func (r *goBinary) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 	if !isCrossCompile {
 		return []string{name}
 	}
-	// Return both host and target outputs
-	hostOutput := fmt.Sprintf("%s_%s_%s", name, runtime.GOOS, runtime.GOARCH)
-	targetOutput := fmt.Sprintf("%s_%s_%s", name, goos, goarch)
+	// Return both host and target outputs (with .exe for windows)
+	hostOutput := outputNameForGoBinary(name, runtime.GOOS, runtime.GOARCH)
+	targetOutput := outputNameForGoBinary(name, goos, goarch)
 	return []string{hostOutput, targetOutput}
 }
 
@@ -433,6 +440,9 @@ func (r *goBinary) buildCrossCompile(m *parser.Module, ctx RuleRenderContext, na
 	ldflags := GetListProp(m, "ldflags")
 
 	envVar, suffix, _, _ := goVariantEnvVars(goos, goarch)
+	if goos == "windows" {
+		suffix += ".exe"
+	}
 	out := name + suffix
 	pkg := goPackageArg(m, ctx)
 	sourceInputs := goSourceInputs(srcs, ctx.PathPrefix)
@@ -482,6 +492,9 @@ func (r *goBinary) ninjaEdgeForVariant(m *parser.Module, ctx RuleRenderContext, 
 	ldflags := GetListProp(m, "ldflags")
 
 	envVar, suffix, _, _ := goVariantEnvVars(goos, goarch)
+	if goos == "windows" {
+		suffix += ".exe"
+	}
 	out := name + suffix
 	mainArchive := out + ".a"
 	importcfgFile := "importcfg_" + out
@@ -610,7 +623,17 @@ func (r *goTest) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 	if !isCrossCompile {
 		return []string{fmt.Sprintf("%s.test", name)}
 	}
-	return []string{fmt.Sprintf("%s_%s_%s.test", name, goos, goarch)}
+	// Return both host and target outputs
+	// Windows test executables need .exe
+	hostOutput := fmt.Sprintf("%s_%s_%s.test", name, runtime.GOOS, runtime.GOARCH)
+	targetOutput := fmt.Sprintf("%s_%s_%s.test", name, goos, goarch)
+	if runtime.GOOS == "windows" {
+		hostOutput = fmt.Sprintf("%s_%s_%s.test.exe", name, runtime.GOOS, runtime.GOARCH)
+	}
+	if goos == "windows" {
+		targetOutput = fmt.Sprintf("%s_%s_%s.test.exe", name, goos, goarch)
+	}
+	return []string{hostOutput, targetOutput}
 }
 
 // NinjaEdge generates ninja build edges for Go test compilation.
@@ -649,16 +672,37 @@ func (r *goTest) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 	}
 
 	variants := getGoTargetVariants(m)
-	if len(variants) == 0 {
-		goos, goarch, isCrossCompile := goosAndArch(ctx)
-		if !isCrossCompile {
-			goos = ""
-			goarch = ""
-		}
-		return r.ninjaEdgeForVariant(m, ctx, goos, goarch)
+	_, _, isCrossCompile := goosAndArch(ctx)
+	
+	// Generate host build first (using runtime platform)
+	hostSuffix := "_" + runtime.GOOS + "_" + runtime.GOARCH
+	if runtime.GOOS == "windows" {
+		hostSuffix += ".exe"
+	}
+	hostEdge := r.ninjaEdgeForVariant(m, ctx, runtime.GOOS, runtime.GOARCH)
+	
+	// If no explicit variants and no cross-compile context, just use simple build without suffix
+	if len(variants) == 0 && !isCrossCompile {
+		return r.ninjaEdgeForVariant(m, ctx, "", "")
 	}
 
+	// If cross-compiling or has variants, include both host and target builds
+	if len(variants) == 0 {
+		// No explicit variants but cross-compiling - generate target build too
+		targetSuffix := "_" + ctx.GOOS + "_" + ctx.GOARCH
+		if ctx.GOOS == "windows" {
+			targetSuffix += ".exe"
+		}
+		var edges strings.Builder
+		edges.WriteString(hostEdge)
+		edges.WriteString(r.ninjaEdgeForVariant(m, ctx, ctx.GOOS, ctx.GOARCH))
+		return edges.String()
+	}
+
+	// Has explicit variants - generate host + variants
 	var edges strings.Builder
+	edges.WriteString(hostEdge)
+
 	sorted := make([]string, len(variants))
 	copy(sorted, variants)
 	sort.Strings(sorted)
@@ -708,6 +752,12 @@ func (r *goTest) ninjaEdgeForVariant(m *parser.Module, ctx RuleRenderContext, go
 
 	envVar, suffix, _, _ := goVariantEnvVars(goos, goarch)
 	out := fmt.Sprintf("%s%s.test", name, suffix)
+	
+	// For windows, test executables need .exe in the command line
+	if goos == "windows" {
+		out = name + suffix + ".test.exe"
+	}
+	
 	cmd := goTestCmd(envVar, goflags, ldflags, out, goPackageArg(m, ctx))
 
 	return fmt.Sprintf("build %s: go_test %s\n cmd = %s\n GOOS_GOARCH = %s\n",

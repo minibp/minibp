@@ -1,5 +1,1 @@
 *.bp linguist-language=Starlark
-*.c linguist-language=C
-*.h linguist-language=C
-*.cpp linguist-language=C++
-*.java linguist-language=Java

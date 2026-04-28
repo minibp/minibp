@@ -163,7 +163,7 @@ srcs: [
     "lib/ninja/rules.go",
     "lib/ninja/writer.go",
     "lib/ninja/cc.go",
-    "lib/ninja/go.go",
+    "lib/ninja/golang.go",
     "lib/ninja/java.go",
     "lib/ninja/filegroup.go",
     "lib/ninja/custom.go",
