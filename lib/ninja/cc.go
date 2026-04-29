@@ -384,6 +384,15 @@ func (r *ccLibrary) ninjaEdgeForVariant(m *parser.Module, ctx RuleRenderContext,
 		compiler = ctx.Ccache + " " + compiler
 	}
 
+	// Determine linker command: use LD if specified, otherwise use compiler
+	linker := compiler
+	if ctx.LD != "" {
+		linker = ctx.LD
+		if ctx.Ccache != "" {
+			linker = ctx.Ccache + " " + linker
+		}
+	}
+
 	// Build flags
 	cflags := joinFlags(ctx.CFlags, getCflags(m), getCppflags(m))
 	if variant != "" {
@@ -435,7 +444,7 @@ func (r *ccLibrary) ninjaEdgeForVariant(m *parser.Module, ctx RuleRenderContext,
 	if shared {
 		// Shared library: link all object files and shared library dependencies.
 		allInputs := append(objFiles, sharedInputs...)
-		edges.WriteString(fmt.Sprintf("build %s: %s %s\n flags = %s\n CC = %s\n", out, sharedRule, strings.Join(allInputs, " "), ldflags, compiler))
+		edges.WriteString(fmt.Sprintf("build %s: %s %s\n flags = %s\n CC = %s\n", out, sharedRule, strings.Join(allInputs, " "), ldflags, linker))
 	} else {
 		// Static library: archive object files into .a file.
 		edges.WriteString(fmt.Sprintf("build %s: %s %s\n", out, archiveRule, strings.Join(objFiles, " ")))
@@ -1256,6 +1265,15 @@ func (r *ccBinary) ninjaEdgeForVariant(m *parser.Module, ctx RuleRenderContext, 
 		compiler = ctx.Ccache + " " + compiler
 	}
 
+	// Determine linker command: use LD if specified, otherwise use compiler
+	linker := compiler
+	if ctx.LD != "" {
+		linker = ctx.LD
+		if ctx.Ccache != "" {
+			linker = ctx.Ccache + " " + linker
+		}
+	}
+
 	// Build flags
 	cflags := joinFlags(ctx.CFlags, getCflags(m), getCppflags(m))
 	if variant != "" {
@@ -1308,7 +1326,7 @@ func (r *ccBinary) ninjaEdgeForVariant(m *parser.Module, ctx RuleRenderContext, 
 	if moduleLto != "" {
 		linkRule = "cc_link_lto"
 	}
-	edges.WriteString(fmt.Sprintf("build %s: %s %s\n flags = %s\n CC = %s\n", out, linkRule, strings.Join(allInputs, " "), ldflags, compiler))
+	edges.WriteString(fmt.Sprintf("build %s: %s %s\n flags = %s\n CC = %s\n", out, linkRule, strings.Join(allInputs, " "), ldflags, linker))
 
 	if moduleLto == "thin" {
 		for _, src := range srcs {
@@ -1469,6 +1487,14 @@ func ccTestEdge(m *parser.Module, ctx RuleRenderContext) string {
 	if compilerType == "cpp" {
 		cflags = joinFlags(getCppflags(m), cflags)
 	}
+	// Determine linker command: use LD if specified, otherwise use compiler
+	linker := compiler
+	if ctx.LD != "" {
+		linker = ctx.LD
+		if ctx.Ccache != "" {
+			linker = ctx.Ccache + " " + linker
+		}
+	}
 	deps := GetListProp(m, "deps")
 	sharedLibs := GetListProp(m, "shared_libs")
 	var libFiles []string
@@ -1500,7 +1526,7 @@ func ccTestEdge(m *parser.Module, ctx RuleRenderContext) string {
 		linkRule = "cc_link_lto"
 	}
 	// Build edge: link all inputs into test binary with flags and compiler variables.
-	edges.WriteString(fmt.Sprintf("build %s: %s %s\n flags = %s\n CC = %s\n", ninjaEscapePath(out), linkRule, strings.Join(allInputs, " "), linkFlags, compiler))
+	edges.WriteString(fmt.Sprintf("build %s: %s %s\n flags = %s\n CC = %s\n", ninjaEscapePath(out), linkRule, strings.Join(allInputs, " "), linkFlags, linker))
 	// Add test-specific arguments if test_options property is set.
 	if args := getTestOptionArgs(m); args != "" {
 		edges.WriteString(fmt.Sprintf(" test_args = %s\n", args))

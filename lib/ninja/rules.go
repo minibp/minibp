@@ -133,6 +133,7 @@ type RuleRenderContext struct {
 	CC             string
 	CXX            string
 	AR             string
+	LD             string // Linker command; empty uses CC/CXX for linking
 	ArchSuffix     string
 	CFlags         string
 	LdFlags        string

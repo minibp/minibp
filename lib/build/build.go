@@ -54,6 +54,9 @@ type Options struct {
 	// AR is the path to the archive tool executable (e.g., "aarch64-linux-gnu-ar").
 	// Overrides the default system archive tool for creating static libraries.
 	AR string
+	// LD is the path to the linker executable (e.g., "ld", "gold", "lld").
+	// If empty, the compiler (CC/CXX) is used for linking.
+	LD string
 	// LTO specifies link-time optimization settings (e.g., "thin", "full").
 	// Controls whether LTO is enabled and which variant to use during linking.
 	LTO string
@@ -548,6 +551,9 @@ func toolchainFromOptions(opts Options) ninja.Toolchain {
 	}
 	if opts.AR != "" {
 		tc.AR = opts.AR
+	}
+	if opts.LD != "" {
+		tc.LD = opts.LD
 	}
 	if opts.Sysroot != "" {
 		tc.Sysroot = opts.Sysroot

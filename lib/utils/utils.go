@@ -78,6 +78,7 @@ type RunConfig struct {
 	CC          string   // C compiler path (default: gcc)
 	CXX         string   // C++ compiler path (default: g++)
 	AR          string   // Archiver path (default: ar)
+	LD          string   // Linker path (default: use CC/CXX)
 	Arch        string   // Target architecture (arm, arm64, x86, x86_64)
 	Multilib    []string // Comma-separated target architectures for multi-arch build
 	TargetOS    string   // Target OS (linux, darwin, windows)
@@ -135,6 +136,7 @@ func ParseRunConfig(args []string, stderr io.Writer) (RunConfig, error) {
 	ccFlag := fs.String("cc", "", "C compiler (default: gcc)")
 	cxxFlag := fs.String("cxx", "", "C++ compiler (default: g++)")
 	arFlag := fs.String("ar", "", "archiver (default: ar)")
+	ldFlag := fs.String("ld", "", "linker (default: use CC/CXX)")
 	archFlag := fs.String("arch", "", "target architecture (arm, arm64, x86, x86_64)")
 	multilibFlag := fs.String("multilib", "", "comma-separated target architectures for multi-arch build (e.g. arm64,x86_64)")
 	osFlag := fs.String("os", "", "target OS (linux, darwin, windows)")
@@ -158,6 +160,7 @@ func ParseRunConfig(args []string, stderr io.Writer) (RunConfig, error) {
 		CC:          *ccFlag,
 		CXX:         *cxxFlag,
 		AR:          *arFlag,
+		LD:          *ldFlag,
 		Arch:        *archFlag,
 		Multilib:    splitCSV(*multilibFlag),
 		TargetOS:    *osFlag,
@@ -274,6 +277,7 @@ func (cfg RunConfig) BuildOptions() BuildOptions {
 		CC:       cfg.CC,
 		CXX:      cfg.CXX,
 		AR:       cfg.AR,
+		LD:       cfg.LD,
 		LTO:      cfg.LTO,
 		Sysroot:  cfg.Sysroot,
 		Ccache:   cfg.Ccache,

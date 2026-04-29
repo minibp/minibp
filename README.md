@@ -61,6 +61,9 @@ go build -o minibp cmd/minibp/main.go
 
 # Specify output file
 ./minibp -o build.ninja Android.bp
+
+# Specify custom toolchain (linker)
+./minibp -cc clang -cxx clang++ -ld lld -a .
 ```
 
 > **Note**: Avoid `go run` for generating ninja files — it causes regeneration on each execution, breaking subsequent ninja builds.

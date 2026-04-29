@@ -101,6 +101,7 @@ type Toolchain struct {
 	CC      string   // C compiler command (e.g., gcc, clang)
 	CXX     string   // C++ compiler command (e.g., g++, clang++)
 	AR      string   // Static library archiver (e.g., ar, llvm-ar)
+	LD      string   // Linker command (e.g., ld, gold, lld); empty uses CC/CXX
 	CFlags  []string // Extra global C/C++ compiler flags
 	LdFlags []string // Extra global linker flags
 	Sysroot string   // Target sysroot for cross-compilation
@@ -783,6 +784,7 @@ func (g *Generator) ruleRenderContextForArch(arch string) RuleRenderContext {
 	ctx.CC = tc.CC
 	ctx.CXX = tc.CXX
 	ctx.AR = tc.AR
+	ctx.LD = tc.LD
 	ctx.CFlags = strings.Join(tc.CFlags, " ")
 	ctx.LdFlags = strings.Join(tc.LdFlags, " ")
 	ctx.Sysroot = tc.Sysroot
