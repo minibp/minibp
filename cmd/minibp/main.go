@@ -293,6 +293,7 @@ func toBuildOptions(opts applib.BuildOptions) buildlib.Options {
 		CC:       opts.CC,
 		CXX:      opts.CXX,
 		AR:       opts.AR,
+		LD:       opts.LD,
 		LTO:      opts.LTO,
 		Sysroot:  opts.Sysroot,
 		Ccache:   opts.Ccache,
