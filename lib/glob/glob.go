@@ -29,13 +29,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 var (
 	// globCache stores the results of glob expansions to avoid redundant filesystem scans.
 	// The key is the glob pattern, and the value is the list of matching file paths.
 	// This cache is populated by ExpandGlobs and checked by ExpandInModule.
-	globCache = make(map[string][]string)
+	globCache   = make(map[string][]string)
+	globCacheMu sync.RWMutex
 )
 
 // ExpandInModule expands glob patterns in the "srcs" property of a module.
@@ -85,8 +87,12 @@ func ExpandInModule(m *parser.Module, baseDir string) error {
 					if s, ok := v.(*parser.String); ok {
 						pattern := s.Value
 						if strings.Contains(pattern, "*") {
-							// Check cache first
-							if matches, ok := globCache[pattern]; ok {
+							// Check cache first with read lock
+							globCacheMu.RLock()
+							matches, ok := globCache[pattern]
+							globCacheMu.RUnlock()
+
+							if ok {
 								for _, match := range matches {
 									if !seen[match] {
 										seen[match] = true
@@ -159,12 +165,22 @@ func ExpandGlobs(modules map[string]*parser.Module, baseDir string) error {
 	}
 
 	for pattern := range patterns {
-		if _, ok := globCache[pattern]; !ok {
-			matches, err := expandGlob(pattern, baseDir)
-			if err != nil {
-				return err
+		globCacheMu.RLock()
+		_, ok := globCache[pattern]
+		globCacheMu.RUnlock()
+
+		if !ok {
+			globCacheMu.Lock()
+			// Re-check after acquiring write lock
+			if _, ok := globCache[pattern]; !ok {
+				matches, err := expandGlob(pattern, baseDir)
+				if err != nil {
+					globCacheMu.Unlock()
+					return err
+				}
+				globCache[pattern] = matches
 			}
-			globCache[pattern] = matches
+			globCacheMu.Unlock()
 		}
 	}
 
@@ -340,17 +356,15 @@ func splitGlobParts(path string) []string {
 	return strings.Split(path, "/")
 }
 
-// matchRecursiveParts recursively matches pattern parts against path parts.
+// matchRecursiveParts matches glob pattern parts against path parts using iteration.
 // This function handles the ** glob operator which matches any number of
-// directory levels. The matching algorithm uses recursion to try both
-// possibilities at each **:
+// directory levels. The matching algorithm uses an explicit stack to try both
+// possibilities at each **, avoiding recursion and potential stack overflow.
 //
 // Algorithm:
-//  1. Base case: empty pattern matches only empty path
-//  2. Handle ** (recursive wildcard):
-//     - Try matching with ** consuming current segment
-//     - Try matching with ** matching zero segments
-//  3. Use filepath.Match for simple glob matching
+//   - Use an explicit stack to simulate recursive calls
+//   - For **: try zero-match first, then one-match (backtracking)
+//   - For simple patterns: use filepath.Match
 //
 // Parameters:
 //   - patternParts: The split glob pattern parts.
@@ -363,40 +377,78 @@ func splitGlobParts(path string) []string {
 // Edge cases:
 //   - ** at pattern end matches any remaining path suffix.
 //   - ** alone matches any path (including empty).
-//   - Path longer than pattern is handled by recursive ** match.
+//   - Path longer than pattern is handled by iterative ** match.
 func matchRecursiveParts(patternParts, pathParts []string) bool {
-	// Base case: empty pattern matches only empty path
-	if len(patternParts) == 0 {
-		return len(pathParts) == 0
+	// Stack frame: patternParts, pathParts, state
+	// state: 0 = initial, 1 = tried zero-match for **, now try one-match
+	type frame struct {
+		patternParts []string
+		pathParts    []string
+		state        int
 	}
 
-	// Handle ** (recursive wildcard)
-	// ** can match zero or more segments; try both possibilities
-	if patternParts[0] == "**" {
-		// Option 1: ** matches zero segments (skip **)
-		if matchRecursiveParts(patternParts[1:], pathParts) {
-			return true
+	stack := []frame{{patternParts: patternParts, pathParts: pathParts, state: 0}}
+
+	for len(stack) > 0 {
+		// Pop top frame
+		top := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		// Base case: empty pattern
+		if len(top.patternParts) == 0 {
+			if len(top.pathParts) == 0 {
+				return true
+			}
+			continue
 		}
-		// Option 2: ** matches at least one segment
-		// Recurse with same pattern, consume one path segment
-		if len(pathParts) == 0 {
-			return false
+
+		// Handle ** (recursive wildcard)
+		if top.patternParts[0] == "**" {
+			if top.state == 0 {
+				// First time: try zero-match first (skip **)
+				// Push current frame with state=1 for later one-match attempt
+				top.state = 1
+				stack = append(stack, top)
+
+				// Try Option 1: ** matches zero segments (skip **)
+				stack = append(stack, frame{
+					patternParts: top.patternParts[1:],
+					pathParts:    top.pathParts,
+					state:        0,
+				})
+			} else {
+				// state == 1: already tried zero-match, now try one-match
+				// Option 2: ** matches at least one segment
+				if len(top.pathParts) == 0 {
+					continue // Cannot match at least one segment
+				}
+				stack = append(stack, frame{
+					patternParts: top.patternParts,
+					pathParts:    top.pathParts[1:],
+					state:        0,
+				})
+			}
+			continue
 		}
-		return matchRecursiveParts(patternParts, pathParts[1:])
+
+		// Path is empty but pattern is not
+		if len(top.pathParts) == 0 {
+			continue
+		}
+
+		// Use filepath.Match for simple glob pattern matching
+		ok, err := filepath.Match(top.patternParts[0], top.pathParts[0])
+		if err != nil || !ok {
+			continue
+		}
+
+		// Match succeeded, continue with remaining parts
+		stack = append(stack, frame{
+			patternParts: top.patternParts[1:],
+			pathParts:    top.pathParts[1:],
+			state:        0,
+		})
 	}
 
-	// Base case: path is empty but pattern is not
-	// Cannot match non-empty pattern with empty path
-	if len(pathParts) == 0 {
-		return false
-	}
-
-	// Use filepath.Match for simple glob pattern matching
-	// Handles *, ?, [abc] single-segment wildcards
-	ok, err := filepath.Match(patternParts[0], pathParts[0])
-	if err != nil || !ok {
-		return false
-	}
-	// Continue matching remaining parts
-	return matchRecursiveParts(patternParts[1:], pathParts[1:])
+	return false
 }

@@ -52,14 +52,11 @@ func GetStringProp(m *parser.Module, name string) string {
 	if m.Map == nil {
 		return ""
 	}
-	// Linear search through properties; blueprints typically have few properties
-	// so this O(n) search is acceptable. n may be 10-50 for most modules.
-	for _, prop := range m.Map.Properties {
-		if prop.Name == name {
-			// Only match String type; list, bool, map types are ignored
-			if s, ok := prop.Value.(*parser.String); ok {
-				return s.Value
-			}
+	// O(1) lookup via property map cache
+	if prop, ok := m.Map.GetPropMap()[name]; ok {
+		// Only match String type; list, bool, map types are ignored
+		if s, ok := prop.Value.(*parser.String); ok {
+			return s.Value
 		}
 	}
 	// Property not found or wrong type: return empty string
@@ -93,21 +90,20 @@ func GetStringPropEval(m *parser.Module, name string, eval *parser.Evaluator) st
 	if m.Map == nil {
 		return ""
 	}
-	for _, prop := range m.Map.Properties {
-		if prop.Name == name {
-			// Only match String type
-			if s, ok := prop.Value.(*parser.String); ok {
-				// Evaluate if evaluator provided, otherwise return raw value
-				if eval != nil {
-					val := eval.Eval(prop.Value)
-					// Check if evaluation returned a string; if eval fails,
-					// type assertion fails and we fall through to return empty
-					if s, ok := val.(string); ok {
-						return s
-					}
-				} else {
-					return s.Value
+	// O(1) lookup via property map cache
+	if prop, ok := m.Map.GetPropMap()[name]; ok {
+		// Only match String type
+		if s, ok := prop.Value.(*parser.String); ok {
+			// Evaluate if evaluator provided, otherwise return raw value
+			if eval != nil {
+				val := eval.Eval(prop.Value)
+				// Check if evaluation returned a string; if eval fails,
+				// type assertion fails and we fall through to return empty
+				if s, ok := val.(string); ok {
+					return s
 				}
+			} else {
+				return s.Value
 			}
 		}
 	}
@@ -138,19 +134,18 @@ func GetListProp(m *parser.Module, name string) []string {
 	if m.Map == nil {
 		return nil
 	}
-	for _, prop := range m.Map.Properties {
-		if prop.Name == name {
-			// Must be List type
-			if l, ok := prop.Value.(*parser.List); ok {
-				var result []string
-				// Collect only string elements; other types silently ignored
-				for _, v := range l.Values {
-					if s, ok := v.(*parser.String); ok {
-						result = append(result, s.Value)
-					}
+	// O(1) lookup via property map cache
+	if prop, ok := m.Map.GetPropMap()[name]; ok {
+		// Must be List type
+		if l, ok := prop.Value.(*parser.List); ok {
+			var result []string
+			// Collect only string elements; other types silently ignored
+			for _, v := range l.Values {
+				if s, ok := v.(*parser.String); ok {
+					result = append(result, s.Value)
 				}
-				return result
 			}
+			return result
 		}
 	}
 	// Property not found or wrong type
@@ -182,23 +177,22 @@ func GetListPropEval(m *parser.Module, name string, eval *parser.Evaluator) []st
 	if m.Map == nil {
 		return nil
 	}
-	for _, prop := range m.Map.Properties {
-		if prop.Name == name {
-			// Must be List type
-			if l, ok := prop.Value.(*parser.List); ok {
-				// Use efficient batch evaluation if evaluator provided
-				if eval != nil {
-					return parser.EvalToStringList(l, eval)
-				}
-				// Otherwise extract raw strings only
-				var result []string
-				for _, v := range l.Values {
-					if s, ok := v.(*parser.String); ok {
-						result = append(result, s.Value)
-					}
-				}
-				return result
+	// O(1) lookup via property map cache
+	if prop, ok := m.Map.GetPropMap()[name]; ok {
+		// Must be List type
+		if l, ok := prop.Value.(*parser.List); ok {
+			// Use efficient batch evaluation if evaluator provided
+			if eval != nil {
+				return parser.EvalToStringList(l, eval)
 			}
+			// Otherwise extract raw strings only
+			var result []string
+			for _, v := range l.Values {
+				if s, ok := v.(*parser.String); ok {
+					result = append(result, s.Value)
+				}
+			}
+			return result
 		}
 	}
 	// Property not found
@@ -241,19 +235,18 @@ func GetBoolProp(m *parser.Module, name string, eval *parser.Evaluator) bool {
 	if m.Map == nil {
 		return false
 	}
-	for _, prop := range m.Map.Properties {
-		if prop.Name == name {
-			// First check for literal Bool type (most common for defaults)
-			if b, ok := prop.Value.(*parser.Bool); ok {
-				return b.Value
-			}
-			// If evaluator provided, try evaluating string expressions
-			// This handles cases like: enabled: "!srcs" or enabled: "${IS_ENABLED}"
-			if eval != nil {
-				val := eval.Eval(prop.Value)
-				if b, ok := val.(bool); ok {
-					return b
-				}
+	// O(1) lookup via property map cache
+	if prop, ok := m.Map.GetPropMap()[name]; ok {
+		// First check for literal Bool type (most common for defaults)
+		if b, ok := prop.Value.(*parser.Bool); ok {
+			return b.Value
+		}
+		// If evaluator provided, try evaluating string expressions
+		// This handles cases like: enabled: "!srcs" or enabled: "${IS_ENABLED}"
+		if eval != nil {
+			val := eval.Eval(prop.Value)
+			if b, ok := val.(bool); ok {
+				return b
 			}
 		}
 	}

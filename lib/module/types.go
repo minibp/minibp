@@ -2,10 +2,20 @@
 // This file defines the various module types (C/C++, Go, Java, Proto, Custom)
 // and helper functions for extracting module properties from AST.
 //
+// Description:
 // The module type system uses a factory pattern where each module type has a
 // corresponding factory struct that knows how to parse AST properties and create
 // the appropriate Module struct. This file contains both the property extraction
 // helpers and all built-in module type definitions.
+//
+// Design decisions:
+//   - Property extraction helpers: Provide reusable functions for extracting common
+//     property types from AST, handling evaluation and type conversion.
+//   - Factory implementations: Each module type has a factory that knows how
+//     to parse the specific properties for that type.
+//   - BaseModule embedding: All module types embed BaseModule to get common functionality.
+//   - Evaluation: Properties can contain expressions (variables, select())
+//     that are evaluated before being stored in the module.
 //
 // Property extraction functions:
 //   - extractStringList: Extract string arrays from AST properties
@@ -13,6 +23,7 @@
 //   - extractAllProps: Extract all properties as a map
 //   - extractPropValue: Convert AST expressions to Go values
 //   - collectDeps: Collect and deduplicate dependencies
+//   - baseModuleFromAST: Create BaseModule from parsed AST
 //
 // Built-in module types:
 //   - C/C++: CCLibrary, CCBinary (with variants)
@@ -30,13 +41,14 @@ import (
 // extractStringList extracts a list of string values from an AST map property.
 // It handles both literal string values and expressions that can be evaluated.
 //
+// Description:
 // This is one of the primary property extraction functions, used for properties
 // that contain arrays of file paths or other string values (e.g., srcs, deps,
 // cflags, includes). The function iterates through the AST properties looking
 // for a property matching the given key. If found, it expects a parser.List
 // containing string values.
 //
-// Algorithm:
+// How it works:
 // 1. Return empty slice immediately if ast is nil (defensive check)
 // 2. Iterate through ast.Properties to find property with matching name
 // 3. If property value is a parser.List, iterate through its values
@@ -92,10 +104,11 @@ func extractStringList(ast *parser.Map, key string, eval *parser.Evaluator) []st
 // extractString extracts a single string value from an AST map property.
 // It handles both literal string values and expressions that can be evaluated.
 //
+// Description:
 // This function is used for properties that contain single string values,
 // such as module names, paths, and identifiers (e.g., "name", "pkg", "main_class").
 //
-// Algorithm:
+// How it works:
 // 1. Return empty string immediately if ast is nil (defensive check)
 // 2. Iterate through ast.Properties to find property with matching name
 // 3. First try direct type assertion to parser.String (fast path for literals)
@@ -142,9 +155,9 @@ func extractString(ast *parser.Map, key string, eval *parser.Evaluator) string {
 // as a Go map. This is used to capture all module properties beyond the
 // built-in ones, allowing custom properties to be accessed generically.
 //
+// Description:
 // Each property value is processed through extractPropValue to handle various
 // expression types (strings, ints, bools, lists, maps, variables).
-//
 // The function creates a new map and populates it with all properties from
 // the AST, converting each property value via extractPropValue. This allows
 // the build system to pass arbitrary properties to ninja rules.
@@ -180,9 +193,17 @@ func extractAllProps(ast *parser.Map, eval *parser.Evaluator) map[string]interfa
 // This is the core type conversion function for property values, handling
 // the translation from AST nodes to Go types used throughout the build system.
 //
+// Description:
 // The function first attempts evaluation if an evaluator is provided,
 // then falls back to type-specific conversion for unevaluated expressions.
 // This allows variables and expressions to be resolved during property extraction.
+//
+// How it works:
+//  1. First try evaluation if evaluator provided - this resolves variables,
+//     select() expressions, etc.
+//  2. If evaluation returns nil or no evaluator, fall back to type-specific conversion
+//  3. For known types (String, Int64, Bool, List, Map, Variable), convert directly
+//  4. For unknown types, use fmt.Sprintf as fallback
 //
 // Conversion rules:
 //   - parser.String: Returns the string Value directly
@@ -251,12 +272,14 @@ func extractPropValue(expr parser.Expression, eval *parser.Evaluator) interface{
 // collectDeps collects all dependencies from an AST module by examining multiple
 // dependency-related properties and deduplicating the results.
 //
+// Description:
 // The function looks at three standard dependency property keys:
 //   - "deps": Direct module dependencies (general dependencies)
 //   - "shared_libs": Shared library dependencies (for runtime linking)
 //   - "header_libs": Header library dependencies (for C/C++ include paths)
 //
-// Using a map-based approach provides O(n) deduplication complexity where
+// How it works:
+// Uses a map-based approach for O(n) deduplication complexity where
 // n is the total number of dependency entries across all properties.
 //
 // Algorithm:
@@ -300,10 +323,13 @@ func collectDeps(ast *parser.Map, eval *parser.Evaluator) []string {
 // This is the common foundation for all module types, extracting
 // the name, type, sources, dependencies, and all properties.
 //
+// Description:
 // The function acts as a factory for creating the base module
 // that all specialized module types embed via composition.
 // It's the first step in creating any module type instance.
 //
+// How it works:
+// Extracts all common fields from the AST and creates a BaseModule struct.
 // Properties extracted:
 //   - name: From the "name" property via extractString
 //   - type: From the AST module's Type field
@@ -339,12 +365,14 @@ func baseModuleFromAST(ast *parser.Module, eval *parser.Evaluator) BaseModule {
 // It includes compiler flags, include paths, and linker flags specific to C/C++.
 // This module type is used for building libraries in multiple formats:
 //
+// Description:
+// The same CCLibrary type handles all these variants based on the module name
+// and build configuration. The ninja generator determines the output format.
+//
+// Variants:
 //   - Static library (.a): For linking into final binaries
 //   - Shared library (.so/.dll): For dynamic linking at runtime
 //   - Object files (.o): For header-only libraries or partial linking
-//
-// The same CCLibrary type handles all these variants based on the module name
-// and build configuration. The ninja generator determines the output format.
 //
 // Common properties:
 //   - cflags: Additional C/C++ compiler flags (e.g., "-Wall", "-O3")
@@ -382,6 +410,8 @@ type CCLibrary struct {
 type CCLibraryFactory struct{}
 
 // Create instantiates a CCLibrary from a parsed AST module.
+//
+// Description:
 // It extracts C-specific properties like cflags, includes, and ldflags,
 // then constructs a CCLibrary with those values embedded in the BaseModule.
 //
@@ -409,6 +439,7 @@ func (f *CCLibraryFactory) Create(ast *parser.Module, eval *parser.Evaluator) (M
 // It includes all CCLibrary fields plus a Static flag for controlling
 // whether dependencies are linked statically or dynamically.
 //
+// Description:
 // When Static is true, all shared library dependencies are converted to
 // static library dependencies at link time. This is useful for building
 // fully self-contained executables.
@@ -445,6 +476,8 @@ type CCBinary struct {
 type CCBinaryFactory struct{}
 
 // Create instantiates a CCBinary from a parsed AST module.
+//
+// Description:
 // It extracts C-specific properties and the optional "static" boolean property.
 //
 // Parameters:
@@ -479,6 +512,7 @@ func (f *CCBinaryFactory) Create(ast *parser.Module, eval *parser.Evaluator) (Mo
 // It includes package path and import path for Go compilation.
 // Go libraries are compiled as .a files that can be linked into binaries.
 //
+// Description:
 // The Go module system differs from C/C++ in that it uses package-based
 // organization rather than file-based. The "pkg" property specifies the
 // filesystem path, while "importpath" specifies the import path for go mod.
@@ -519,6 +553,8 @@ type GoLibrary struct {
 type GoLibraryFactory struct{}
 
 // Create instantiates a GoLibrary from a parsed AST module.
+//
+// Description:
 // It extracts the "pkg", "importpath", "goflags", and "ldflags" properties.
 //
 // Parameters:
@@ -546,6 +582,7 @@ func (f *GoLibraryFactory) Create(ast *parser.Module, eval *parser.Evaluator) (M
 // It has the same properties as GoLibrary since both are Go packages.
 // The distinction is in how the ninja generator handles them:
 //
+// Description:
 //   - go_binary: Produces an executable binary
 //   - go_test: Produces a test binary that links the test package
 //
@@ -580,6 +617,8 @@ type GoBinary struct {
 type GoBinaryFactory struct{}
 
 // Create instantiates a GoBinary from a parsed AST module.
+//
+// Description:
 // It extracts the "pkg", "importpath", "goflags", and "ldflags" properties.
 //
 // Parameters:
@@ -608,6 +647,7 @@ func (f *GoBinaryFactory) Create(ast *parser.Module, eval *parser.Evaluator) (Mo
 // It includes package name and resource directories for Java compilation.
 // Java libraries are compiled as .jar files containing .class files.
 //
+// Description:
 // The Java build system uses different conventions than C/C++ or Go.
 // The "package" property refers to the Java package name, not a filesystem path.
 //
@@ -637,6 +677,8 @@ type JavaLibrary struct {
 type JavaLibraryFactory struct{}
 
 // Create instantiates a JavaLibrary from a parsed AST module.
+//
+// Description:
 // It extracts the "package" and "resource_dirs" properties.
 //
 // Parameters:
@@ -663,6 +705,7 @@ func (f *JavaLibraryFactory) Create(ast *parser.Module, eval *parser.Evaluator) 
 // The main_class property specifies the fully qualified class name
 // containing the public static void main(String[]) method.
 //
+// Description:
 // Common properties:
 //   - package: The Java package name
 //   - main_class: The fully qualified class name with main() method
@@ -690,6 +733,8 @@ type JavaBinary struct {
 type JavaBinaryFactory struct{}
 
 // Create instantiates a JavaBinary from a parsed AST module.
+//
+// Description:
 // It extracts the "package", "main_class", and "resource_dirs" properties.
 //
 // Parameters:
@@ -721,6 +766,7 @@ func (f *JavaBinaryFactory) Create(ast *parser.Module, eval *parser.Evaluator) (
 // Proto libraries compile .proto files into language-specific code using
 // the protoc compiler with specified plugins.
 //
+// Description:
 // Protocol Buffers (protobuf) is a language-neutral, platform-neutral
 // mechanism for serializing structured data. The proto_library module
 // type generates code in various languages from .proto definitions.
@@ -761,6 +807,7 @@ type ProtoLibraryFactory struct{}
 
 // Create instantiates a ProtoLibrary from a parsed AST module.
 //
+// Description:
 // Parameters:
 //   - ast: The parser.Module AST node containing all module properties
 //   - eval: Optional evaluator for computing expression values
@@ -787,6 +834,7 @@ func (f *ProtoLibraryFactory) Create(ast *parser.Module, eval *parser.Evaluator)
 // It differs from ProtoLibrary in that it's a user-defined generator
 // rather than using the standard protoc flow.
 //
+// Description:
 // ProtoGen modules allow custom protoc plugin invocations with
 // arbitrary command-line arguments. They're used when you need
 // more control over the code generation process than proto_library provides.
@@ -820,6 +868,7 @@ type ProtoGenFactory struct{}
 
 // Create instantiates a ProtoGen from a parsed AST module.
 //
+// Description:
 // Parameters:
 //   - ast: The parser.Module AST node containing all module properties
 //   - eval: Optional evaluator for computing expression values
@@ -849,6 +898,7 @@ func (f *ProtoGenFactory) Create(ast *parser.Module, eval *parser.Evaluator) (Mo
 // This is used when no specific module type matches, providing a catch-all
 // for extensibility. All properties are stored in the BaseModule props map.
 //
+// Description:
 // Custom modules are useful for:
 //   - Defining aggregate targets that group other modules
 //   - Wrapper modules that don't require special compilation
@@ -872,6 +922,7 @@ type CustomFactory struct{}
 // Create instantiates a Custom from a parsed AST module.
 // All properties are stored in the embedded BaseModule's Props_ map.
 //
+// Description:
 // Parameters:
 //   - ast: The parser.Module AST node containing all module properties
 //   - eval: Optional evaluator for computing expression values
@@ -894,27 +945,28 @@ func (f *CustomFactory) Create(ast *parser.Module, eval *parser.Evaluator) (Modu
 // ============================================================================
 
 // registerBuiltInModuleTypes registers all built-in module types with the registry.
+//
+// Description:
 // This function is called during package initialization to set up the default
 // module type factories for C/C++, Go, Java, Proto, and custom modules.
-//
 // Registration is done via the Register function which uses a mutex for
 // thread-safety. This allows the function to be called during init() without
 // issues even if other initialization code accesses the registry.
 //
 // Registered module types by language:
 //   - C/C++:
-//   - cc_library, cc_library_static, cc_library_shared, cc_object
-//   - cc_binary, cpp_library, cpp_binary, cc_test, cc_library_headers
+//     cc_library, cc_library_static, cc_library_shared, cc_object
+//     cc_binary, cpp_library, cpp_binary, cc_test, cc_library_headers
 //   - Go:
-//   - go_library, go_binary, go_test
+//     go_library, go_binary, go_test
 //   - Java:
-//   - java_library, java_library_static, java_library_host
-//   - java_binary, java_binary_host, java_test, java_import
+//     java_library, java_library_static, java_library_host
+//     java_binary, java_binary_host, java_test, java_import
 //   - Proto:
-//   - proto_library, proto_gen
+//     proto_library, proto_gen
 //   - Other:
-//   - filegroup, phony, sh_binary_host, python_binary_host
-//   - python_test_host, custom
+//     filegroup, phony, sh_binary_host, python_binary_host
+//     python_test_host, custom
 func registerBuiltInModuleTypes() {
 	// C/C++ library types - all use CCLibraryFactory
 	Register("cc_library", &CCLibraryFactory{})
@@ -963,10 +1015,10 @@ func registerBuiltInModuleTypes() {
 // init is the package initialization function that registers all built-in
 // module types when the module package is first imported.
 //
+// Description:
 // Go's init() mechanism ensures this runs before any other code in the
 // package executes. This provides automatic registration of core module
 // types without requiring explicit initialization in user code.
-//
 // The registration happens once at program startup and populates the
 // global registry with factories for all standard module types. Custom
 // module types can be registered by other packages in their own init()

@@ -44,16 +44,21 @@ import (
 // The build system resolves these declarations into complete dependency graphs
 // for determining build order and detecting conflicts.
 //
-// Fields:
-//   - Name: The unique identifier of the dependency module. This is used
-//     to look up the dependency in the module registry.
-//   - Version: The version constraint or exact version string.
-//     Empty string means "any version" or "latest available".
-//   - Optional: Whether this dependency is required or optional.
-//     Optional dependencies don't cause build failures if missing.
+// Design notes:
+//   - Version is a string to support arbitrary versioning schemes (semver, date-based, etc.).
+//   - Optional dependencies don't cause build failures if missing (useful for test dependencies).
+//   - Dependencies are deduplicated by name during transitive resolution.
 type Dependency struct {
-	Name     string
-	Version  string
+	// Name is the unique identifier of the dependency module. This is used
+	// to look up the dependency in the module registry.
+	Name string
+
+	// Version is the version constraint or exact version string.
+	// Empty string means "any version" or "latest available".
+	Version string
+
+	// Optional indicates whether this dependency is required or optional.
+	// Optional dependencies don't cause build failures if missing.
 	Optional bool
 }
 
@@ -61,11 +66,10 @@ type Dependency struct {
 // It maintains mappings of modules to their direct dependencies and dependents,
 // enabling transitive dependency resolution, conflict detection, and topological ordering.
 //
-// The graph uses two edge representations:
-//   - edges: forward mapping (module -> its dependencies) for dependency resolution
-//   - reverseEdges: reverse mapping (dependency -> modules that depend on it) for dependent lookup
-//
-// This bidirectional structure supports efficient queries in both directions.
+// Design notes:
+//   - The graph uses two edge representations to support efficient bidirectional queries.
+//   - edges maps module -> its dependencies (forward edges) for dependency walking.
+//   - reverseEdges maps dependency -> modules that depend on it (reverse edges) for impact analysis.
 //
 // The graph must be populated using AddModule before performing any
 // resolution operations. The typical workflow is:
@@ -79,17 +83,27 @@ type Dependency struct {
 //   - edges: Map of module name to list of its direct dependency names (forward edges)
 //   - reverseEdges: Map of module name to list of modules that depend on it (reverse edges)
 type DependencyGraph struct {
-	modules      map[string]*ModuleNode
-	edges        map[string][]string // module -> dependencies
-	reverseEdges map[string][]string // module -> dependents
+	// modules maps module names to their ModuleNode representations.
+	// Contains all modules added to the graph via AddModule.
+	modules map[string]*ModuleNode
+
+	// edges maps module names to their direct dependency names (forward edges).
+	// For example, edges["A"] = ["B", "C"] means module A depends on B and C.
+	edges map[string][]string
+
+	// reverseEdges maps module names to modules that depend on them (reverse edges).
+	// For example, reverseEdges["B"] = ["A"] means module A depends on B.
+	reverseEdges map[string][]string
 }
 
 // ModuleNode represents a node in the dependency graph corresponding to a single module.
 // Each node tracks both direct and transitive dependencies, as well as which modules depend on it.
 //
-// This node structure is created when a module is added to the graph and is updated
-// during the dependency resolution process. The AllDeps field is populated
-// by calculateTransitiveDeps after all modules have been added.
+// Design notes:
+//   - DirectDeps are the dependencies declared in the module's properties (input).
+//   - AllDeps is computed during ResolveDependencies (output, cached).
+//   - Dependents are built from reverseEdges during AddModule (output, maintained).
+//   - IsRoot is set to true by default; SetNonRoot() may be called to mark dependency-only modules.
 //
 // Fields:
 //   - Name: Unique identifier of the module
@@ -99,12 +113,26 @@ type DependencyGraph struct {
 //   - Dependents: List of module names that depend on this module
 //   - IsRoot: True if this is a root module (directly buildable), false if it's only a dependency
 type ModuleNode struct {
-	Name       string
-	Type       string
+	// Name is the unique identifier for this module.
+	Name string
+
+	// Type is the module type (e.g., "cc_library", "java_library").
+	Type string
+
+	// DirectDeps are the dependencies explicitly declared by this module.
 	DirectDeps []Dependency
-	AllDeps    []Dependency // Transitive dependencies
-	Dependents []string     // Modules that depend on this module
-	IsRoot     bool         // True if this is a root module (not a dependency)
+
+	// AllDeps contains all transitive dependencies (direct and indirect).
+	// Computed by calculateTransitiveDeps during ResolveDependencies.
+	AllDeps []Dependency
+
+	// Dependents is the list of module names that have this module as a direct dependency.
+	// Built from reverseEdges during AddModule.
+	Dependents []string
+
+	// IsRoot indicates whether this is a root module (directly buildable).
+	// If false, this module is only used as a dependency of other modules.
+	IsRoot bool
 }
 
 // Conflict represents a dependency version conflict detected during resolution.
@@ -125,12 +153,23 @@ type ModuleNode struct {
 //   - Path1: List of modules requiring Version1 (the dependency path)
 //   - Path2: List of modules requiring Version2
 type Conflict struct {
-	Module   string
-	DepName  string
+	// Module is the module where the conflict was detected.
+	Module string
+
+	// DepName is the name of the dependency with conflicting versions.
+	DepName string
+
+	// Version1 is the first version requirement found.
 	Version1 string
+
+	// Version2 is the second (different) version requirement found.
 	Version2 string
-	Path1    []string
-	Path2    []string
+
+	// Path1 is the list of modules that require Version1.
+	Path1 []string
+
+	// Path2 is the list of modules that require Version2.
+	Path2 []string
 }
 
 // Resolution represents the result of dependency resolution.
@@ -148,9 +187,17 @@ type Conflict struct {
 //   - Conflicts: Slice of detected version conflicts (may be empty)
 //   - Order: Topological ordering of modules for build
 type Resolution struct {
-	Success   bool
+	// Success indicates whether resolution completed without errors.
+	// False if circular dependencies were detected or other failures.
+	Success bool
+
+	// Conflicts contains all detected version conflicts.
+	// An empty slice means no conflicts were found.
 	Conflicts []Conflict
-	Order     []string // Topological order
+
+	// Order is the topologically sorted list of module names.
+	// Dependencies appear before the modules that depend on them.
+	Order []string
 }
 
 // NewDependencyGraph creates a new empty dependency graph.
@@ -158,6 +205,10 @@ type Resolution struct {
 // Returns a pointer to a newly initialized DependencyGraph with empty maps.
 // The graph starts with no modules and must be populated using AddModule
 // before any resolution or query operations can be performed.
+//
+// How it works:
+//   - Allocates empty maps for modules, edges, and reverseEdges.
+//   - No modules are added until AddModule is called.
 //
 // Returns:
 //   - *DependencyGraph: A new empty dependency graph instance ready for AddModule calls
@@ -185,6 +236,13 @@ func NewDependencyGraph() *DependencyGraph {
 //   - moduleType: Type of the module (e.g., "cc_library", "java_library")
 //   - deps: Slice of Dependency objects representing direct dependencies.
 //     Can be empty if the module has no dependencies.
+//
+// How it works:
+//  1. Check for duplicate module name; return early if exists.
+//  2. Create ModuleNode with DirectDeps and IsRoot=true.
+//  3. Add to modules map.
+//  4. Initialize edges and reverseEdges entries.
+//  5. For each dependency, append to edges[name] and reverseEdges[dep.Name].
 //
 // Edge cases:
 //   - If a module with the same name already exists, this function returns early
@@ -240,6 +298,13 @@ func (g *DependencyGraph) AddModule(name, moduleType string, deps []Dependency) 
 //   - *Resolution: Resolution result containing success status, conflicts, and build order.
 //     The Success field indicates whether the graph is valid for building.
 //
+// How it works:
+//  1. Initialize Resolution with Success=true.
+//  2. For each module, call calculateTransitiveDeps to populate AllDeps.
+//  3. Call detectConflicts to find version mismatches; set Success=false if found.
+//  4. Call topologicalSort to compute build order; set Success=false on error.
+//  5. Return the Resolution object.
+//
 // Edge cases:
 //   - If circular dependencies are detected, topological sort fails and Success is false
 //   - Modules with no dependencies are valid and appear first in the topological order
@@ -288,7 +353,7 @@ func (g *DependencyGraph) ResolveDependencies() *Resolution {
 //   - Duplicate dependencies are removed
 //   - Cycles are handled via visited tracking
 //
-// The algorithm:
+// How it works:
 //  1. Uses recursive DFS with a visited set to track visited modules
 //  2. For each visited module, adds all its direct dependencies
 //  3. Recursively visits each dependency
@@ -427,7 +492,7 @@ func (g *DependencyGraph) detectConflicts() []Conflict {
 //  4. Sort queue for deterministic ordering (alphabetical)
 //  5. Check for circular dependencies (not all modules processed)
 //
-// In-degree for a module = number of direct dependencies it has.
+// In--degree for a module = number of direct dependencies it has.
 // A module can be built when all its dependencies have been built.
 //
 // Returns:
@@ -443,7 +508,7 @@ func (g *DependencyGraph) topologicalSort() ([]string, error) {
 
 	// Step 1: Initialize in-degree map.
 	// Each module starts with in-degree 0; we'll count dependencies next.
-	// In-degree represents the number of direct dependencies a module has.
+	// In--degree represents the number of direct dependencies a module has.
 	// A module with in-degree 0 has no dependencies and can be built first.
 	inDegree := make(map[string]int)
 
@@ -668,9 +733,9 @@ func (g *DependencyGraph) GetDependencies(moduleName string) []string {
 // Output format:
 //
 //	ModuleName (module_type)
-//	 -> dependency_name [version]
-//	 -> dependency_name [version]
-//	 (no dependencies)
+//	  -> dependency_name [version]
+//	  -> dependency_name [version]
+//	  (no dependencies)
 //
 // Each module entry is separated by a blank line.
 // The output is not guaranteed to be in any particular order.

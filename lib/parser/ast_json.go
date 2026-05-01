@@ -33,8 +33,21 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+	"sync"
 	"text/scanner"
 )
+
+// propertyJSONPool pools intermediate structs for Property.MarshalJSON to reduce allocations.
+var propertyJSONPool = sync.Pool{
+	New: func() interface{} {
+		return &struct {
+			Name     string     `json:"name"`
+			NamePos  string     `json:"name_pos"`
+			Value    Expression `json:"value"`
+			ColonPos string     `json:"colon_pos"`
+		}{}
+	},
+}
 
 // ==================== JSON Struct Definitions: For Marshal/Unmarshal ====================
 
@@ -271,17 +284,22 @@ func (m *Map) UnmarshalJSON(data []byte) error {
 //	  "colon_pos": "Android.bp:10:9"
 //	}
 func (p *Property) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
+	// Get intermediate struct from pool to reduce allocations
+	obj := propertyJSONPool.Get().(*struct {
 		Name     string     `json:"name"`
 		NamePos  string     `json:"name_pos"`
 		Value    Expression `json:"value"`
 		ColonPos string     `json:"colon_pos"`
-	}{
-		Name:     p.Name,
-		NamePos:  posToString(p.NamePos),
-		Value:    p.Value,
-		ColonPos: posToString(p.ColonPos),
 	})
+	defer propertyJSONPool.Put(obj)
+
+	// Populate fields
+	obj.Name = p.Name
+	obj.NamePos = posToString(p.NamePos)
+	obj.Value = p.Value
+	obj.ColonPos = posToString(p.ColonPos)
+
+	return json.Marshal(obj)
 }
 
 // UnmarshalJSON implements json.Unmarshaler for Property.

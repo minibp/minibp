@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"minibp/lib/parser"
 )
@@ -56,6 +57,8 @@ func TestNeedsReparse(t *testing.T) {
 
 	// Modify file: should need reparse
 	os.WriteFile(bpFile, []byte("cc_library { name: \"test2\" }"), 0644)
+	// Ensure mtime changes (filesystem may have low precision)
+	time.Sleep(1 * time.Second)
 	needs, err = mgr.NeedsReparse(bpFile)
 	if err != nil {
 		t.Fatalf("NeedsReparse failed: %v", err)

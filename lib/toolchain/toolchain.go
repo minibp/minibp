@@ -1,6 +1,5 @@
 // Package toolchain provides cross-architecture compilation support.
-// It manages toolchain configurations for different target architectures
-// and operating systems.
+// It manages toolchain configurations for different target architectures and operating systems.
 //
 // This package handles:
 //   - Detection of available compilers (gcc, g++, ar) based on target platform
@@ -24,6 +23,8 @@ import (
 )
 
 // Architecture represents a target CPU architecture.
+//
+// Description:
 // Supported architectures include:
 //   - Arm: 32-bit ARM (ARMv7)
 //   - Arm64: 64-bit ARM (ARMv8/AArch64)
@@ -39,6 +40,8 @@ const (
 )
 
 // OS represents a target operating system.
+//
+// Description:
 // Supported operating systems include:
 //   - Linux: Linux systems
 //   - Windows: Windows systems
@@ -53,9 +56,10 @@ const (
 	Android OS = "android"
 )
 
-// Toolchain represents a complete toolchain configuration for a given
-// target architecture and operating system. It contains paths to
-// the C compiler, C++ compiler, static library archiver, and linker,
+// Toolchain represents a complete toolchain configuration for a given target architecture and operating system.
+//
+// Description:
+// It contains paths to the C compiler, C++ compiler, static library archiver, and linker,
 // as well as optional sysroot configuration.
 //
 // Fields:
@@ -64,25 +68,27 @@ const (
 //   - CC: Path to C compiler executable
 //   - CXX: Path to C++ compiler executable
 //   - AR: Path to static library archiver (ar)
-//   - LD: Path to linker
+//   - LD: Path to linker executable
 //   - Sysroot: Optional sysroot directory for cross-compilation
 type Toolchain struct {
-	Arch    Architecture
-	OS      OS
-	CC      string // C compiler
-	CXX     string // C++ compiler
-	AR      string // Static linker
-	LD      string // Linker
-	Sysroot string
+	Arch    Architecture // Target CPU architecture
+	OS      OS           // Target operating system
+	CC      string       // Path to C compiler executable
+	CXX     string       // Path to C++ compiler executable
+	AR      string       // Path to static library archiver
+	LD      string       // Path to linker executable
+	Sysroot string       // Optional sysroot directory for cross-compilation
 }
 
 // ToolchainConfig provides toolchain detection and configuration management.
-// It maintains a cache of detected toolchains to avoid repeated detection
-// and provides methods to discover and configure compilers for
-// different target architectures and operating systems.
 //
-// The ToolchainConfig holds default tool names and a map of cached
-// toolchain configurations keyed by "architecture-os" strings.
+// Description:
+// It maintains a cache of detected toolchains to avoid repeated detection and provides methods to discover
+// and configure compilers for different target architectures and operating systems.
+//
+// How it works:
+// The ToolchainConfig holds default tool names and a map of cached toolchain configurations
+// keyed by "architecture-os" strings.
 //
 // Fields:
 //   - defaultCC: Default C compiler name (usually "gcc")
@@ -91,24 +97,28 @@ type Toolchain struct {
 //   - defaultLD: Default linker name (usually "ld")
 //   - toolchains: Cache of detected toolchains mapped by key
 type ToolchainConfig struct {
-	defaultCC  string
-	defaultCXX string
-	defaultAR  string
-	defaultLD  string
-	toolchains map[string]*Toolchain
+	defaultCC  string                // Default C compiler name
+	defaultCXX string                // Default C++ compiler name
+	defaultAR  string                // Default static library archiver name
+	defaultLD  string                // Default linker name
+	toolchains map[string]*Toolchain // Cache of detected toolchains
 }
 
-// NewToolchainConfig creates a new ToolchainConfig instance with
-// default toolchain tool names (gcc, g++, ar, ld) and initializes
-// an empty toolchain cache.
+// NewToolchainConfig creates a new ToolchainConfig instance.
+//
+// Description:
+// Initializes a ToolchainConfig with default toolchain tool names (gcc, g++, ar, ld) and an empty toolchain cache.
+//
+// Parameters:
+//   - (none) All parameters are provided as defaults
 //
 // Returns:
-//   - *ToolchainConfig: A pointer to a new ToolchainConfig ready for use.
-//     The returned instance must be used to detect toolchains via
-//     DetectToolchain method.
+//   - *ToolchainConfig: A pointer to a new ToolchainConfig ready for use. The returned instance
+//     must be used to detect toolchains via DetectToolchain method.
 //
-// Note: The returned instance starts with an empty cache. Call
-// DetectToolchain to populate the cache with toolchain configurations.
+// Note:
+// The returned instance starts with an empty cache. Call DetectToolchain to populate
+// the cache with toolchain configurations.
 func NewToolchainConfig() *ToolchainConfig {
 	return &ToolchainConfig{
 		defaultCC:  "gcc",
@@ -119,12 +129,14 @@ func NewToolchainConfig() *ToolchainConfig {
 	}
 }
 
-// DetectToolchain detects or retrieves from cache the appropriate
-// toolchain for the given target architecture and operating system.
+// DetectToolchain detects or retrieves from cache the appropriate toolchain.
 //
-// If a toolchain for the specified arch/OS combination has already
-// been detected, it returns the cached instance. Otherwise, it performs
-// toolchain detection which includes:
+// Description:
+// If a toolchain for the specified arch/OS combination has already been detected,
+// it returns the cached instance. Otherwise, it performs toolchain detection.
+//
+// How it works:
+// Toolchain detection includes:
 //  1. Creating a new Toolchain with default tool names
 //  2. Attempting to find architecture-specific cross-compiler tools
 //  3. Falling back to default tools if specialized tools are not found
@@ -143,18 +155,12 @@ func NewToolchainConfig() *ToolchainConfig {
 //   - Cross-compiler not found falls back to default tool names
 //   - Empty cache results in fresh detection with caching
 func (tc *ToolchainConfig) DetectToolchain(arch Architecture, targetOS OS) (*Toolchain, error) {
-	// Create cache key from architecture and OS.
-	// This key is used to cache and retrieve toolchain configurations.
 	key := fmt.Sprintf("%s-%s", arch, targetOS)
 
-	// Fast path: return cached toolchain if already detected.
-	// This avoids repeated tool detection for the same configuration.
 	if toolchain, ok := tc.toolchains[key]; ok {
 		return toolchain, nil
 	}
 
-	// Initialize toolchain with default tool names.
-	// These will be replaced by detectTools if cross-compilers are found.
 	toolchain := &Toolchain{
 		Arch: arch,
 		OS:   targetOS,
@@ -164,23 +170,22 @@ func (tc *ToolchainConfig) DetectToolchain(arch Architecture, targetOS OS) (*Too
 		LD:   tc.defaultLD,
 	}
 
-	// Detect appropriate tools for the target configuration.
-	// This may find cross-compilers or fall back to defaults.
 	toolchain.CC, toolchain.CXX, toolchain.AR = tc.detectTools(arch, targetOS)
 
-	// Cache the detected toolchain for future lookups.
-	// Subsequent calls for the same configuration will use the cache.
 	tc.toolchains[key] = toolchain
 	return toolchain, nil
 }
 
-// detectTools detects the appropriate compiler tools (C compiler, C++
-// compiler, and archiver) for the given target architecture and OS.
+// detectTools detects the appropriate compiler tools for the given target.
 //
+// Description:
+// Detects the C compiler, C++ compiler, and archiver for the target architecture and OS.
+//
+// How it works:
 // The detection logic follows these steps:
 //  1. Start with default tool names (gcc, g++, ar)
 //  2. Check for architecture-specific toolchain prefix
-//  3. If a prefix is found (e.g., "arm-linux-gnueabihf"), try using
+//  3. If a prefix is found (e.9., "arm-linux-gnueabihf"), try using
 //     prefix-gcc, prefix-g++, prefix-ar tool names
 //  4. Verify each tool exists in PATH; if not found, fall back to default
 //
@@ -198,26 +203,17 @@ func (tc *ToolchainConfig) DetectToolchain(arch Architecture, targetOS OS) (*Too
 //   - Empty prefix: uses default tool names directly
 //   - Tool not in PATH: falls back to default for that tool only
 func (tc *ToolchainConfig) detectTools(arch Architecture, targetOS OS) (cc, cxx, ar string) {
-	// Initialize with default tool names.
-	// These serve as fallback when specialized tools are not available.
 	cc = tc.defaultCC
 	cxx = tc.defaultCXX
 	ar = tc.defaultAR
 
-	// Attempt to find architecture-specific cross-compiler prefix.
-	// This returns empty string if no cross-compiler prefix applies.
 	prefix := tc.getToolchainPrefix(arch, targetOS)
 	if prefix != "" {
-		// Construct cross-compiler tool names from prefix.
-		// Examples: "arm-linux-gnueabihf-gcc", "aarch64-linux-android-g++"
 		cc = prefix + "-gcc"
 		cxx = prefix + "-g++"
 		ar = prefix + "-ar"
 	}
 
-	// Verify each tool exists in PATH.
-	// Fall back to default tool if the constructed name is not found.
-	// Note: Each tool is checked independently; others may still use cross-compiler.
 	if !tc.toolExists(cc) {
 		cc = tc.defaultCC
 	}
@@ -231,11 +227,14 @@ func (tc *ToolchainConfig) detectTools(arch Architecture, targetOS OS) (cc, cxx,
 	return cc, cxx, ar
 }
 
-// getToolchainPrefix returns the toolchain prefix string used for
-// cross-compilation tool discovery. The prefix is combined with
-// standard tool names (gcc, g++, ar) to form cross-compiler
+// getToolchainPrefix returns the toolchain prefix for cross-compilation.
+//
+// Description:
+// Returns the toolchain prefix string used for cross-compilation tool discovery.
+// The prefix is combined with standard tool names (gcc, g++, ar) to form cross-compiler
 // tool names like "arm-linux-gnueabihf-gcc".
 //
+// How it works:
 // The mapping is specific to the target OS and architecture:
 //   - Android: arm-linux-androideabi, aarch64-linux-android,
 //     i686-linux-android, x86_64-linux-android
@@ -277,14 +276,14 @@ func (tc *ToolchainConfig) getToolchainPrefix(arch Architecture, targetOS OS) st
 			return "x86_64-linux-gnu"
 		}
 	}
-	// No prefix applies for unsupported OS/arch combinations.
-	// Callers will use default tool names.
 	return ""
 }
 
-// toolExists checks if a tool (executable) exists in the system PATH.
-// It uses findExecutable to search for the tool and returns true
-// if the executable is found, false otherwise.
+// toolExists checks if a tool exists in the system PATH.
+//
+// Description:
+// It uses findExecutable to search for the tool and returns true if the executable is found,
+// false otherwise.
 //
 // Parameters:
 //   - name: Name or path of the tool to check
@@ -292,15 +291,17 @@ func (tc *ToolchainConfig) getToolchainPrefix(arch Architecture, targetOS OS) st
 // Returns:
 //   - bool: True if the tool exists and is executable, false otherwise
 //
-// Note: This is a convenience method that wraps findExecutable.
+// Note:
+// This is a convenience method that wraps findExecutable.
 func (tc *ToolchainConfig) toolExists(name string) bool {
 	_, err := tc.findExecutable(name)
 	return err == nil
 }
 
 // findExecutable searches for an executable in the system PATH.
-// This is a wrapper around execLookup that allows for dependency
-// injection in tests.
+//
+// Description:
+// This is a wrapper around execLookup that allows for dependency injection in tests.
 //
 // Parameters:
 //   - name: Name or path of the executable to find
@@ -309,15 +310,17 @@ func (tc *ToolchainConfig) toolExists(name string) bool {
 //   - string: Full path to the executable if found
 //   - error: Error if not found
 //
-// Note: This method exists to allow dependency injection in tests.
+// Note:
+// This method exists to allow dependency injection in tests.
 func (tc *ToolchainConfig) findExecutable(name string) (string, error) {
 	return execLookup(name)
 }
 
-// execLookup searches for an executable by name in all directories
-// listed in the system PATH environment variable. It checks each
-// directory by joining the directory path with the executable name
-// and testing if the file exists and is not a directory.
+// execLookup searches for an executable by name in all directories listed in the system PATH environment variable.
+//
+// Description:
+// It checks each directory by joining the directory path with the executable name and testing if the file
+// exists and is not a directory.
 //
 // Parameters:
 //   - name: The name of the executable to find
@@ -331,14 +334,9 @@ func (tc *ToolchainConfig) findExecutable(name string) (string, error) {
 //   - Executable in current directory with "./" prefix: handled correctly
 //   - PATH directories that don't exist: skipped silently
 func execLookup(name string) (string, error) {
-	// Retrieve PATH environment variable.
-	// This may be empty on minimal systems.
 	path := os.Getenv("PATH")
 	for _, dir := range filepath.SplitList(path) {
-		// Construct full path to executable.
 		execPath := filepath.Join(dir, name)
-		// Check if the path exists and is a file (not a directory).
-		// Directories with the executable name are ignored.
 		if info, err := os.Stat(execPath); err == nil && !info.IsDir() {
 			return execPath, nil
 		}
@@ -346,10 +344,12 @@ func execLookup(name string) (string, error) {
 	return "", fmt.Errorf("executable not found: %s", name)
 }
 
-// GetCompileFlags returns architecture-specific compilation flags
-// for the target architecture. These flags are typically passed
-// to the C/C++ compiler to generate code for the target architecture.
+// GetCompileFlags returns architecture-specific compilation flags.
 //
+// Description:
+// Returns flags typically passed to the C/C++ compiler to generate code for the target architecture.
+//
+// How it works:
 // The returned flags include:
 //   - -march flag for ARM architectures (armv7-a, armv8-a)
 //   - -m32 or -m64 flag for x86 architectures
@@ -369,21 +369,15 @@ func (t *Toolchain) GetCompileFlags() []string {
 
 	switch t.Arch {
 	case Arm:
-		// ARMv7-a with thumb mode for code size reduction.
 		flags = append(flags, "-march=armv7-a", "-mthumb")
 	case Arm64:
-		// ARMv8-a (64-bit ARM architecture).
 		flags = append(flags, "-march=armv8-a")
 	case X86:
-		// 32-bit x86 mode.
 		flags = append(flags, "-m32")
 	case X86_64:
-		// 64-bit x86 mode.
 		flags = append(flags, "-m64")
 	}
 
-	// Add sysroot flag if configured.
-	// This is common for cross-compilation and embedded builds.
 	if t.Sysroot != "" {
 		flags = append(flags, "--sysroot="+t.Sysroot)
 	}
@@ -391,11 +385,13 @@ func (t *Toolchain) GetCompileFlags() []string {
 	return flags
 }
 
-// GetLinkFlags returns architecture-specific linker flags
-// for the target architecture. These flags are typically passed
-// to the linker to generate executables or shared libraries
+// GetLinkFlags returns architecture-specific linker flags.
+//
+// Description:
+// Returns flags typically passed to the linker to generate executables or shared libraries
 // for the target architecture.
 //
+// How it works:
 // The returned flags include:
 //   - -march flag for ARM architectures (armv7-a, armv8-a)
 //   - -m32 or -m64 flag for x86 architectures
@@ -415,21 +411,15 @@ func (t *Toolchain) GetLinkFlags() []string {
 
 	switch t.Arch {
 	case Arm:
-		// ARMv7-a architecture for linking.
 		flags = append(flags, "-march=armv7-a")
 	case Arm64:
-		// ARMv8-a (64-bit ARM architecture) for linking.
 		flags = append(flags, "-march=armv8-a")
 	case X86:
-		// 32-bit x86 mode for linking.
 		flags = append(flags, "-m32")
 	case X86_64:
-		// 64-bit x86 mode for linking.
 		flags = append(flags, "-m64")
 	}
 
-	// Add sysroot flag if configured.
-	// This is common for cross-compilation and embedded builds.
 	if t.Sysroot != "" {
 		flags = append(flags, "--sysroot="+t.Sysroot)
 	}
@@ -437,10 +427,11 @@ func (t *Toolchain) GetLinkFlags() []string {
 	return flags
 }
 
-// GetOutputPrefix returns a prefix string formed by concatenating
-// the architecture and operating system names. This is useful for
-// generating unique output file names when building for multiple
-// target configurations.
+// GetOutputPrefix returns a prefix string for output file naming.
+//
+// Description:
+// Returns a prefix formed by concatenating the architecture and operating system names.
+// This is useful for generating unique output file names when building for multiple target configurations.
 //
 // Example: "arm64-android", "x86_64-linux"
 //
@@ -453,8 +444,10 @@ func (t *Toolchain) GetOutputPrefix() string {
 	return fmt.Sprintf("%s-%s", t.Arch, t.OS)
 }
 
-// Validate checks if the Toolchain configuration is valid by
-// verifying that both architecture and operating system are set.
+// Validate checks if the Toolchain configuration is valid.
+//
+// Description:
+// Verifies that both architecture and operating system are set.
 //
 // Parameters:
 //   - (none)
@@ -476,9 +469,10 @@ func (t *Toolchain) Validate() error {
 	return nil
 }
 
-// String returns a human-readable string representation of the
-// Toolchain configuration, showing the architecture, operating system,
-// and the C/C++ compiler paths.
+// String returns a human-readable string representation.
+//
+// Description:
+// Shows the architecture, operating system, and the C/C++ compiler paths.
 //
 // Example: "arm64-android (aarch64-linux-android-gcc/aarch64-linux-android-g++)"
 //
@@ -488,14 +482,15 @@ func (t *Toolchain) Validate() error {
 // Returns:
 //   - string: String representation of the toolchain
 func (t *Toolchain) String() string {
-	return fmt.Sprintf("%s-%s (%s/%s)",
-		t.Arch, t.OS, t.CC, t.CXX)
+	return fmt.Sprintf("%s-%s (%s/%s)", t.Arch, t.OS, t.CC, t.CXX)
 }
 
-// ParseArchitecture parses a string representation of an architecture
-// and returns the corresponding Architecture type. It accepts various
-// common aliases and is case-insensitive.
+// ParseArchitecture parses a string representation of an architecture.
 //
+// Description:
+// Converts string to Architecture type. Accepts various common aliases and is case-insensitive.
+//
+// How it works:
 // Supported input strings:
 //   - "arm", "ARM" -> Arm
 //   - "arm64", "aarch64", "ARM64", "AARCH64" -> Arm64
@@ -529,10 +524,12 @@ func ParseArchitecture(s string) (Architecture, error) {
 	}
 }
 
-// ParseOS parses a string representation of an operating system
-// and returns the corresponding OS type. It accepts various common
-// aliases and is case-insensitive.
+// ParseOS parses a string representation of an operating system.
 //
+// Description:
+// Converts string to OS type. Accepts various common aliases and is case-insensitive.
+//
+// How it works:
 // Supported input strings:
 //   - "linux", "LINUX" -> Linux
 //   - "windows", "WINDOWS" -> Windows
@@ -547,7 +544,7 @@ func ParseArchitecture(s string) (Architecture, error) {
 //   - error: Error if the string cannot be parsed
 //
 // Edge cases:
-//   - Case-insensitive matching: "LINUX", "Linux", "linux" all work
+//   - Case- insensitive matching: "LINUX", "Linux", "linux" all work
 //   - Alias support: "macos" maps to Darwin
 //   - Unknown string: returns descriptive error
 func ParseOS(s string) (OS, error) {

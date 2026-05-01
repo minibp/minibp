@@ -1,4 +1,26 @@
 // Package ninja implements C/C++ build rules for minibp.
+//
+// This package provides the BuildRule implementations for C and C++ language
+// modules in the Blueprint/Soong build system. It handles compilation, archiving,
+// linking, and other build operations for C/C++ source files.
+//
+// Design decisions:
+//   - Uses file extension detection to determine whether to use C or C++ compiler
+//   - Supports both static (.a) and shared (.so) library outputs
+//   - Supports LTO (Link Time Optimization) for both full and thin LTO modes
+//   - Uses ccache for compiler caching when available
+//   - Supports multi-architecture builds via ArchSuffix
+//   - Supports architecture variants (e.g., host, target, arm64, x86_64)
+//
+// Key module types:
+//   - cc_library: Produces either static or shared library based on "shared" property
+//   - cc_library_static: Always produces static library (.a)
+//   - cc_library_shared: Always produces shared library (.so)
+//   - cc_object: Produces object files (.o) without archiving/linking
+//   - cc_binary: Produces executable binary
+//   - cc_library_headers: Header-only library for include path management
+//   - cc_test: Test executable with test-specific configurations
+//
 // This file implements the BuildRule interface for C and C++ language modules.
 // It provides rules for compiling C/C++ source files into libraries, binaries, and object files.
 // The key module types are: cc_library, cc_library_static, cc_library_shared, cc_object, cc_binary, and cc_library_headers.
@@ -37,12 +59,31 @@ import (
 )
 
 // detectCompilerType determines whether source files are C or C++ based on file extensions.
-// It returns "cpp" if any source file has a C++ extension (.cpp, .cc, .cxx, .c++, .hpp, .hxx).
-// Otherwise it returns "cc" for C files. Header files (.h) are treated as C unless a C++ specific extension is used.
+//
+// Description:
+//
+//	This function scans the provided source file list and determines whether
+//	the C++ compiler should be used. It checks file extensions looking for
+//	C++-specific extensions.
+//
+// How it works:
+//
+//	Iterates through each source file and extracts the file extension.
+//	If any file has a C++ extension, returns "cpp" immediately.
+//	Otherwise returns "cc" for C files.
+//
+// Parameters:
+//   - srcs: Slice of source file paths to check
+//
+// Returns:
+//   - "cpp" if any source file has a C++ extension (.cpp, .cc, .cxx, .c++, .hpp, .hxx)
+//   - "cc" otherwise
 //
 // Edge cases:
-//   - Returns "cc" if srcs is empty or no C++ extensions are found
-//   - Header files (.h) are treated as C by default, even if mixed with C++ files (C++ extension takes precedence)
+//   - Empty srcs slice: Returns "cc" (no files to check)
+//   - Only .h files: Returns "cc" (.h is treated as C)
+//   - Mix of C and C++ files: Returns "cpp" (C++ takes precedence)
+//   - .hpp, .hxx extensions: Treated as C++ headers
 func detectCompilerType(srcs []string) string {
 	for _, src := range srcs {
 		ext := strings.ToLower(filepath.Ext(src))
@@ -57,48 +98,71 @@ func detectCompilerType(srcs []string) string {
 }
 
 // ccCompilerCmd returns the C/C++ compiler command to use for compilation.
-// It selects between CC (C compiler) and CXX (C++ compiler) based on compilerType.
-// If ccache is configured in the context, it prepends ccache to the compiler command.
-// This enables compiler caching for faster incremental builds.
+//
+// Description:
+//
+//	This function selects the appropriate compiler command based on the
+//	compiler type and optionally wraps it with ccache for compiler caching.
+//
+// How it works:
+//  1. Select CC or CXX based on compilerType parameter
+//  2. If ccache is configured, prepend ccache to the compiler command
+//  3. Return the full compiler command string
 //
 // Parameters:
-//   - ctx: Rule render context containing CC, CXX, and Ccache configuration
+//   - ctx: RuleRenderContext containing CC, CXX, and Ccache configuration
 //   - compilerType: Either "cc" for C compiler or "cpp" for C++ compiler
 //
 // Returns:
-//   - A string containing the full compiler command (e.g., "gcc", "g++", "ccache g++")
+//   - Full compiler command string (e.g., "gcc", "g++", "ccache gcc")
 //
 // Edge cases:
-//   - Empty Ccache: Returns just the compiler without ccache prefix
-//   - Invalid compilerType: Falls back to CC (C compiler) by default
+//   - Empty Ccache string: Returns compiler without ccache prefix
+//   - Invalid compilerType: Returns CC (C compiler) as default
+//   - Empty ctx.CC or ctx.CXX: Uses empty string (should not happen in practice)
 func ccCompilerCmd(ctx RuleRenderContext, compilerType string) string {
 	cc := ctx.CC
 	if compilerType == "cpp" {
 		cc = ctx.CXX
 	}
 	if ctx.Ccache != "" {
-		return ctx.Ccache + " " + cc
+		var b strings.Builder
+		b.Grow(len(ctx.Ccache) + 1 + len(cc))
+		b.WriteString(ctx.Ccache)
+		b.WriteString(" ")
+		b.WriteString(cc)
+		return b.String()
 	}
 	return cc
 }
 
 // ltoFlags returns compiler and linker flags for Link Time Optimization (LTO).
-// LTO can be "full" for full LTO, "thin" for thin LTO, or "" for no LTO.
-// Full LTO provides maximum optimization but takes longer to build.
-// Thin LTO provides faster builds with good optimization.
-// Returns empty strings if LTO is not enabled.
+//
+// Description:
+//
+//	This function returns the appropriate compiler and linker flags for
+//	enabling Link Time Optimization. LTO allows the compiler to optimize
+//	across compilation units at link time.
+//
+// How it works:
+//
+//	Based on the LTO mode parameter:
+//	- "full": Returns flags for full LTO with maximum optimization
+//	- "thin": Returns flags for thin LTO with faster build times
+//	- Other: Returns empty strings (LTO disabled)
 //
 // Parameters:
-//   - lto: LTO mode string ("full", "thin", or "" for disabled)
+//   - lto: LTO mode string - "full", "thin", or "" for disabled
 //
 // Returns:
 //   - compile: Compiler flags for LTO (e.g., "-flto -ffat-lto-objects")
 //   - link: Linker flags for LTO (e.g., "-flto -fuse-linker-plugin")
 //
 // Edge cases:
-//   - Empty or invalid lto string: Returns empty strings (no LTO flags)
-//   - "full" mode: Uses -flto with -ffat-lto-objects for maximum optimization
-//   - "thin" mode: Uses -flto=thin for faster incremental builds
+//   - Empty or invalid lto string: Returns empty strings
+//   - "full" mode: Uses -flto with -ffat-lto-objects for full LTO
+//   - "thin" mode: Uses -flto=thin for thin LTO
+//   - Mode is case-sensitive (must be lowercase)
 func ltoFlags(lto string) (compile string, link string) {
 	switch lto {
 	case "full":
@@ -111,20 +175,30 @@ func ltoFlags(lto string) (compile string, link string) {
 }
 
 // ltoArchiveCmd returns the archiver command for creating static libraries with LTO.
-// When LTO is enabled and the default ar is not suitable, it returns gcc-ar or llvm-ar.
-// This ensures proper LTO symbol resolution in static libraries.
+//
+// Description:
+//
+//	When LTO is enabled, the standard ar archiver may not be compatible
+//	with LTO object files. This function returns an appropriate archiver
+//	(gcc-ar or llvm-ar) that can handle LTO-enabled static libraries.
+//
+// How it works:
+//  1. If LTO is disabled (empty string), return ar unchanged
+//  2. If already using gcc-ar or llvm-ar, return unchanged
+//  3. Otherwise, return gcc-ar as the default LTO-compatible archiver
 //
 // Parameters:
 //   - ar: The default archiver command (e.g., "ar", "gcc-ar", "llvm-ar")
-//   - lto: LTO mode string ("full", "thin", or "" for disabled)
+//   - lto: LTO mode string - "full", "thin", or "" for disabled
 //
 // Returns:
-//   - The appropriate archiver command for LTO-enabled static libraries
+//   - Appropriate archiver command for LTO-enabled static libraries
 //
 // Edge cases:
-//   - LTO disabled (empty string): Returns original ar command unchanged
-//   - Already using gcc-ar or llvm-ar: Returns as-is (no modification needed)
-//   - Default "ar" command: Returns "gcc-ar" as fallback for LTO compatibility
+//   - LTO disabled: Returns original ar command unchanged
+//   - Already using gcc-ar: Returns as-is
+//   - Already using llvm-ar: Returns as-is
+//   - Using default "ar": Returns "gcc-ar" for LTO compatibility
 func ltoArchiveCmd(ar string, lto string) string {
 	if lto == "full" || lto == "thin" {
 		if strings.Contains(ar, "gcc-ar") || strings.Contains(ar, "llvm-ar") {
@@ -139,58 +213,65 @@ func ltoArchiveCmd(ar string, lto string) string {
 }
 
 // ccLibrary implements a C/C++ library rule.
-// This is the main library type that produces either .a (static) or .so (shared) libraries.
-// The output type is determined by the "shared" boolean property on the module.
+//
+// Description:
+//
+//	This is the main library type that produces either static (.a) or
+//	shared (.so) libraries. The output type is determined by the "shared"
+//	boolean property on the module.
+//
+// Design decisions:
+//   - Uses "shared" property to determine output type
+//   - Automatically adds "lib" prefix to library names
+//   - Supports multi-architecture builds via ArchSuffix
+//   - Supports LTO for both compilation and linking
+//   - Uses ccache for compiler caching when available
 //
 // NinjaRule generates these ninja rules:
-//   - cc_compile: Standard C/C++ compilation with dependency tracking via -MMD -MF
-//   - cc_compile_lto: Compilation with LTO enabled (produces LTO-compatible object files)
-//   - cc_archive: Archive object files into static library using ar/ gcc-ar
-//   - cc_shared: Link object files into shared library with -shared flag
-//   - cc_link_lto: Link with LTO enabled (requires LTO-compatible linker)
-//   - thinlto_codegen: Generate thin LTO intermediate files for incremental builds
-//
-// Outputs returns the library filename:
-//   - lib{name}{suffix}.so for shared libraries
-//   - lib{name}{suffix}.a for static libraries
-//
-// The "lib" prefix is automatically added if the module name doesn't already start with "lib".
-// ArchSuffix is appended for multi-architecture builds (e.g., "_arm64", "_x86_64").
+//   - cc_compile: Standard C/C++ compilation with dependency tracking
+//   - cc_compile_lto: Compilation with LTO enabled
+//   - cc_archive: Archive object files into static library
+//   - cc_shared: Link object files into shared library
+//   - cc_link_lto: Link with LTO enabled
+//   - thinlto_codegen: Generate thin LTO intermediate files
 type ccLibrary struct{}
 
 // Name returns the module type name for cc_library.
-// This name is used to match module types in Blueprint files (e.g., cc_library { ... }).
+//
+// Description:
+//
+//	Returns "cc_library" which is used to match this rule implementation
+//	to module definitions in Blueprint files.
+//
+// Returns:
+//   - "cc_library" string
 func (r *ccLibrary) Name() string { return "cc_library" }
 
 // NinjaRule defines the ninja compilation, archiving, and linking rules for C/C++ libraries.
 //
-// The generated rules include:
-//   - cc_compile: Standard C/C++ compilation with dependency tracking
-//   - Uses -MMD -MF to generate .d dependency files for incremental builds
-//   - deps = gcc tells ninja to parse GCC-style dependency files
-//   - cc_compile_lto: Compilation with LTO enabled
-//   - Produces object files with LTO information for whole-program optimization
-//   - cc_archive: Archive static library from object files
-//   - Uses ar rcs or gcc-ar for LTO compatibility
-//   - restat = true tells ninja to recheck timestamp after rule execution
-//   - cc_shared: Link shared library from object files
-//   - Uses response files (@$out.rsp) to handle large numbers of inputs
-//   - rspfile_content = $in writes all inputs to the response file
-//   - cc_link_lto: Link with LTO enabled
-//   - Requires LTO-compatible linker (typically gold or lld)
-//   - thinlto_codegen: Generate thin LTO intermediate files
-//   - -fthin-link generates intermediate files for parallel LTO optimization
+// Description:
+//
+//	This method generates all Ninja rules needed for compiling C/C++ source
+//	files into libraries. It includes standard compilation, LTO compilation,
+//	archiving, shared library linking, and LTO linking rules.
+//
+// How it works:
+//  1. Get LTO-compatible archiver using ltoArchiveCmd
+//  2. Get LTO flags using ltoFlags
+//  3. Generate rule definitions for each build operation
+//  4. Return all rules as a formatted string
 //
 // Parameters:
-//   - ctx: Rule render context with toolchain and flags
+//   - ctx: RuleRenderContext with toolchain and flags (CC, CXX, AR, Lto, Ccache)
 //
 // Returns:
 //   - Ninja rule definitions as formatted string
 //
 // Edge cases:
-//   - LTO mode "thin": Enables thinlto_codegen rule for incremental LTO builds
-//   - ccache enabled: Compiler commands are prefixed with ccache path
-//   - Custom AR: Uses ltoArchiveCmd to select appropriate archiver for LTO
+//   - LTO mode "thin": Includes thinlto_codegen rule
+//   - ccache enabled: Compiler commands prefixed with ccache path
+//   - Custom AR: Uses ltoArchiveCmd to select appropriate archiver
+//   - Empty LTO: Generates standard rules only
 func (r *ccLibrary) NinjaRule(ctx RuleRenderContext) string {
 	arCmd := ltoArchiveCmd(ctx.AR, ctx.Lto)
 	ltoCompile, ltoLink := ltoFlags(ctx.Lto)
@@ -223,21 +304,33 @@ rule thinlto_codegen
 }
 
 // Outputs returns the library output paths.
-// For shared libraries (with "shared" property set to true), returns lib{name}{suffix}.so.
-// For static libraries (default), returns lib{name}{suffix}.a.
-// Returns nil if the module has no name (invalid module).
+//
+// Description:
+//
+//	This method returns the output file paths for the library. The output type
+//	depends on the "shared" property: static (.a) or shared (.so).
+//
+// How it works:
+//  1. Get module name from "name" property
+//  2. If name is empty, return nil
+//  3. Add "lib" prefix if not present
+//  4. Check "shared" property to determine output type
+//  5. Append ArchSuffix for multi-architecture builds
 //
 // Parameters:
-//   - m: Module being evaluated (must have "name" and optionally "shared" properties)
-//   - ctx: Rule render context with architecture suffix for multi-arch builds
+//   - m: parser.Module being evaluated (must have "name" property, optionally "shared")
+//   - ctx: RuleRenderContext with ArchSuffix for multi-arch builds
 //
 // Returns:
-//   - List containing the library output path (e.g., ["libfoo_arm64.so"] or ["libfoo.a"])
+//   - List containing the library output path
+//   - nil if module has no name
 //
 // Edge cases:
-//   - Empty name: Returns nil (cannot determine output path)
-//   - Name without "lib" prefix: Automatically prepends "lib" (e.g., "foo" -> "libfoo")
-//   - ArchSuffix from context: Appended to output name for multi-architecture builds
+//   - Empty name: Returns nil
+//   - "foo" becomes "libfoo"
+//   - "libbar" stays "libbar"
+//   - shared=true: Returns .so extension
+//   - shared=false or missing: Returns .a extension
 func (r *ccLibrary) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 	name := getName(m)
 	if name == "" {
@@ -255,33 +348,32 @@ func (r *ccLibrary) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 }
 
 // NinjaEdge generates ninja build edges for compiling source files and creating the library.
-// It compiles each source file to an object file, then archives or links them into the final library.
-// For shared libraries, it links object files into a shared object (.so) with shared library dependencies.
-// For static libraries, it archives object files into a static archive (.a) using ar or gcc-ar.
-// When LTO is "thin", it also generates thinlto_codegen edges for intermediate object files.
+//
+// Description:
+//
+//	This method generates the ninja build edges for compiling source files and
+//	creating either a static or shared library. It handles architecture variants
+//	by generating separate build edges for each variant.
+//
+// How it works:
+//  1. Get module name and source files, exit early if missing
+//  2. Check for architecture variants using getGoTargetVariants
+//  3. If no variants, call ninjaEdgeForVariant with empty string
+//  4. If variants exist, generate edges for each variant in sorted order
 //
 // Parameters:
-//   - m: Module being evaluated (must have "name", "srcs", optionally "shared", "shared_libs" properties)
-//   - ctx: Rule render context with toolchain and flags (CC, CXX, CFlags, LdFlags, Lto, etc.)
+//   - m: parser.Module being evaluated (must have "name", "srcs", optionally "shared", "shared_libs")
+//   - ctx: RuleRenderContext with toolchain and flags
 //
 // Returns:
-//   - Ninja build edge string for compilation and linking (may be multi-line for multiple edges)
+//   - Ninja build edge string for compilation and linking
 //   - Empty string if module has no name or no source files
 //
-// Build algorithm:
-//  1. Get module name and source files, exit early if missing
-//  2. Determine compiler type (C vs C++) from file extensions using detectCompilerType
-//  3. Select compile rule (cc_compile or cc_compile_lto based on LTO setting)
-//  4. Collect shared library dependencies and add -l flags to linker flags
-//  5. Generate compile edges for each source file (output: {name}_{src_basename}.o)
-//  6. Generate archive edge (cc_archive) for static or link edge (cc_shared/cc_link_lto) for shared
-//  7. Generate thinlto_codegen edges if LTO is "thin" for incremental LTO optimization
-//
 // Edge cases:
-//   - Empty srcs or name: Returns "" (nothing to compile)
-//   - Module-level LTO overrides context LTO setting
-//   - Shared libraries with shared_libs: Adds -l{depName} to ldflags
-//   - C++ sources: Adds cppflags to compilation flags
+//   - Empty srcs or name: Returns ""
+//   - Module-level LTO overrides context LTO
+//   - shared_libs: Adds -l flags to ldflags
+//   - C++ sources: Adds cppflags to cflags
 func (r *ccLibrary) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 	name := getName(m)
 	srcs := getSrcs(m)
@@ -381,7 +473,12 @@ func (r *ccLibrary) ninjaEdgeForVariant(m *parser.Module, ctx RuleRenderContext,
 		compiler = cxx
 	}
 	if ctx.Ccache != "" {
-		compiler = ctx.Ccache + " " + compiler
+		var b strings.Builder
+		b.Grow(len(ctx.Ccache) + 1 + len(compiler))
+		b.WriteString(ctx.Ccache)
+		b.WriteString(" ")
+		b.WriteString(compiler)
+		compiler = b.String()
 	}
 
 	// Determine linker command: use LD if specified, otherwise use compiler
@@ -389,7 +486,12 @@ func (r *ccLibrary) ninjaEdgeForVariant(m *parser.Module, ctx RuleRenderContext,
 	if ctx.LD != "" {
 		linker = ctx.LD
 		if ctx.Ccache != "" {
-			linker = ctx.Ccache + " " + linker
+			var b strings.Builder
+			b.Grow(len(ctx.Ccache) + 1 + len(linker))
+			b.WriteString(ctx.Ccache)
+			b.WriteString(" ")
+			b.WriteString(linker)
+			linker = b.String()
 		}
 	}
 
@@ -1262,7 +1364,12 @@ func (r *ccBinary) ninjaEdgeForVariant(m *parser.Module, ctx RuleRenderContext, 
 		compiler = cxx
 	}
 	if ctx.Ccache != "" {
-		compiler = ctx.Ccache + " " + compiler
+		var b strings.Builder
+		b.Grow(len(ctx.Ccache) + 1 + len(compiler))
+		b.WriteString(ctx.Ccache)
+		b.WriteString(" ")
+		b.WriteString(compiler)
+		compiler = b.String()
 	}
 
 	// Determine linker command: use LD if specified, otherwise use compiler
@@ -1270,7 +1377,12 @@ func (r *ccBinary) ninjaEdgeForVariant(m *parser.Module, ctx RuleRenderContext, 
 	if ctx.LD != "" {
 		linker = ctx.LD
 		if ctx.Ccache != "" {
-			linker = ctx.Ccache + " " + linker
+			var b strings.Builder
+			b.Grow(len(ctx.Ccache) + 1 + len(linker))
+			b.WriteString(ctx.Ccache)
+			b.WriteString(" ")
+			b.WriteString(linker)
+			linker = b.String()
 		}
 	}
 
@@ -1492,7 +1604,12 @@ func ccTestEdge(m *parser.Module, ctx RuleRenderContext) string {
 	if ctx.LD != "" {
 		linker = ctx.LD
 		if ctx.Ccache != "" {
-			linker = ctx.Ccache + " " + linker
+			var b strings.Builder
+			b.Grow(len(ctx.Ccache) + 1 + len(linker))
+			b.WriteString(ctx.Ccache)
+			b.WriteString(" ")
+			b.WriteString(linker)
+			linker = b.String()
 		}
 	}
 	deps := GetListProp(m, "deps")

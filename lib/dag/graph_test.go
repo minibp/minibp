@@ -52,7 +52,7 @@ func TestNewGraph(t *testing.T) {
 	if g == nil {
 		t.Fatal("NewGraph returned nil")
 	}
-	if len(g.modules) != 0 {
+	if len(g.Modules) != 0 {
 		t.Error("New graph should have empty modules")
 	}
 }
@@ -64,7 +64,7 @@ func TestAddModule(t *testing.T) {
 	m := &MockModule{name: "A", deps: []string{"B"}}
 	g.AddModule(m)
 
-	if len(g.modules) != 1 {
+	if len(g.Modules) != 1 {
 		t.Error("Module not added")
 	}
 }

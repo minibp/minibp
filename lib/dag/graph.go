@@ -56,14 +56,22 @@ import (
 //   - to: The dependency module (the module that must be built first)
 //   - edges[from] contains all modules that "from" depends on
 type Graph struct {
-	// modules stores all modules in the graph, keyed by module name.
-	// Used for validation and module lookup.
-	modules map[string]module.Module
+	// Modules is the collection of all registered modules in the graph,
+	// keyed by module name. This map is used for validating that all
+	// referenced modules exist and for looking up module objects during
+	// dependency resolution. Only modules added via AddModule are stored here.
+	Modules map[string]module.Module
 
-	// edges stores dependency relationships: key is dependent module,
-	// value is list of dependencies that must be built first.
-	// For example, if A depends on B and C, edges["A"] = ["B", "C"].
-	edges map[string][]string
+	// Edges represents the dependency relationships between modules.
+	// The map key is the dependent module (the module that depends on others),
+	// and the value is a list of dependency modules that must be built first.
+	// For example, if module A depends on modules B and C, then
+	// edges["A"] = ["B", "C"], meaning B and C must be built before A.
+	//
+	// The edge direction follows build dependencies: an edge from X to Y
+	// means Y must be completed before X can begin. This allows the
+	// topological sort to produce a valid build order.
+	Edges map[string][]string
 }
 
 // NewGraph creates and returns a new empty dependency graph.
@@ -90,8 +98,8 @@ type Graph struct {
 //	graph.AddEdge("A", "B")  // Module A depends on module B
 func NewGraph() *Graph {
 	return &Graph{
-		modules: make(map[string]module.Module),
-		edges:   make(map[string][]string),
+		Modules: make(map[string]module.Module),
+		Edges:   make(map[string][]string),
 	}
 }
 
@@ -117,7 +125,7 @@ func NewGraph() *Graph {
 //
 // Returns:
 //   - This method does not return a value.
-//   - On success, the module is added to g.modules and g.edges.
+//   - On success, the module is added to g.Modules and g.Edges.
 //   - If m is nil, the method returns immediately without modification.
 //
 // Edge cases:
@@ -128,11 +136,11 @@ func NewGraph() *Graph {
 //   - Concurrent access: not thread-safe; external synchronization required.
 func (g *Graph) AddModule(m module.Module) {
 	if m != nil {
-		g.modules[m.Name()] = m
+		g.Modules[m.Name()] = m
 		// Initialize edges slice if not exists
 		// This ensures module exists in edges map even with no deps
-		if _, exists := g.edges[m.Name()]; !exists {
-			g.edges[m.Name()] = []string{}
+		if _, exists := g.Edges[m.Name()]; !exists {
+			g.Edges[m.Name()] = []string{}
 		}
 	}
 }
@@ -171,14 +179,14 @@ func (g *Graph) AddModule(m module.Module) {
 func (g *Graph) AddEdge(from, to string) {
 	// Ensure both modules exist in edges map
 	// Initialize empty slices for new modules
-	if _, exists := g.edges[from]; !exists {
-		g.edges[from] = []string{}
+	if _, exists := g.Edges[from]; !exists {
+		g.Edges[from] = []string{}
 	}
-	if _, exists := g.edges[to]; !exists {
-		g.edges[to] = []string{}
+	if _, exists := g.Edges[to]; !exists {
+		g.Edges[to] = []string{}
 	}
 	// Add dependency relationship
-	g.edges[from] = append(g.edges[from], to)
+	g.Edges[from] = append(g.Edges[from], to)
 }
 
 // GetDeps returns a copy of the direct dependencies for a named module.
@@ -208,7 +216,7 @@ func (g *Graph) AddEdge(from, to string) {
 //   - Returned slice is a copy; modifications don't affect internal state.
 //   - Concurrent access: not thread-safe; external synchronization required.
 func (g *Graph) GetDeps(name string) []string {
-	if deps, exists := g.edges[name]; exists {
+	if deps, exists := g.Edges[name]; exists {
 		// Return a copy to prevent external modification
 		// This protects the internal graph state
 		result := make([]string, len(deps))
@@ -252,20 +260,20 @@ func (g *Graph) TopoSort() ([][]string, error) {
 	// In-degree represents how many dependencies a module has
 	// that haven't been processed yet
 	inDegree := make(map[string]int)
-	for name := range g.modules {
+	for name := range g.Modules {
 		inDegree[name] = 0
 	}
 
 	// Step 2: Validate dependencies and count in-degrees
 	// For each module, count its dependencies and validate they exist
-	for from, deps := range g.edges {
+	for from, deps := range g.Edges {
 		// Validate that the module itself exists
-		if _, exists := g.modules[from]; !exists {
+		if _, exists := g.Modules[from]; !exists {
 			return nil, fmt.Errorf("module '%s' referenced in dependency graph does not exist", from)
 		}
 		// Validate each dependency exists
 		for _, to := range deps {
-			if _, exists := g.modules[to]; !exists {
+			if _, exists := g.Modules[to]; !exists {
 				return nil, fmt.Errorf("dependency '%s' of module '%s' does not exist", to, from)
 			}
 			// "from" depends on "to", so "from" has an incoming edge
@@ -278,76 +286,66 @@ func (g *Graph) TopoSort() ([][]string, error) {
 	// When a dependency is processed, we inform its dependents
 	// This allows reducing in-degree of dependents when dependency completes
 	reverseEdges := make(map[string][]string)
-	for from, deps := range g.edges {
+	for from, deps := range g.Edges {
 		for _, to := range deps {
 			reverseEdges[to] = append(reverseEdges[to], from)
 		}
 	}
 
-	// Step 4: Kahn's algorithm - process levels iteratively
-	// Each iteration finds modules ready to build (in-degree = 0)
+	// Step 4: Kahn's algorithm with queue - process levels iteratively
+	// Use a queue to track nodes with in-degree 0, avoiding O(V²) scans
 	var levels [][]string
-	visited := make(map[string]bool)
-	nodeCount := len(g.modules)
+	processed := make(map[string]bool)
+	nodeCount := len(g.Modules)
 
-	// Continue processing until all modules have been assigned to a level
-	for len(visited) < nodeCount {
-		// Find all nodes with in-degree 0 that haven't been visited
-		// These are modules whose dependencies have all been processed
-		var currentLevel []string
-		for name, degree := range inDegree {
-			if degree == 0 && !visited[name] {
-				currentLevel = append(currentLevel, name)
-			}
+	// Initialize queue with all nodes that have in-degree 0
+	queue := make([]string, 0, nodeCount)
+	for name, degree := range inDegree {
+		if degree == 0 {
+			queue = append(queue, name)
 		}
+	}
 
-		// Cycle detection: no nodes with in-degree 0 but nodes remain
-		// This indicates a cycle in the dependency graph
-		if len(currentLevel) == 0 {
-			// Collect remaining unvisited nodes for error message
-			var remaining []string
-			for name := range g.modules {
-				if !visited[name] {
-					remaining = append(remaining, name)
-				}
-			}
-			// Build descriptive error message with cycle info
-			cycleInfo := fmt.Sprintf("cycle detected in dependency graph involving modules: %v", remaining)
-			// Add dependency chain information to help debugging
-			for _, name := range remaining {
-				deps := g.GetDeps(name)
-				if len(deps) > 0 {
-					cycleInfo += fmt.Sprintf("; %s depends on %v", name, deps)
-				}
-			}
-			return nil, fmt.Errorf("%s", cycleInfo)
-		}
+	// Process level by level
+	for len(queue) > 0 {
+		// Current level: all nodes with in-degree 0 at this iteration
+		currentLevel := make([]string, len(queue))
+		copy(currentLevel, queue)
+		queue = queue[:0] // Reset queue for next level
 
-		// Sort level for deterministic output
-		// This ensures consistent ordering across runs
-		// Critical for reproducible builds
+		// Sort level for deterministic output (critical for reproducible builds)
 		sort.Strings(currentLevel)
+		levels = append(levels, currentLevel)
 
-		// Mark current level as visited
-		// These modules are now "processed" and ready
+		// Process each node in current level
 		for _, name := range currentLevel {
-			visited[name] = true
-		}
-
-		// Reduce in-degree of neighbors
-		// For each module processed at this level, inform its dependents
-		// that one less dependency needs to be processed
-		for _, name := range currentLevel {
+			processed[name] = true
+			// Reduce in-degree of dependents; add to queue if in-degree reaches 0
 			for _, dependent := range reverseEdges[name] {
-				if !visited[dependent] {
-					inDegree[dependent]--
+				inDegree[dependent]--
+				if inDegree[dependent] == 0 {
+					queue = append(queue, dependent)
 				}
 			}
 		}
+	}
 
-		// Add this level to the results
-		// All modules in currentLevel can be executed in parallel
-		levels = append(levels, currentLevel)
+	// Cycle detection: if not all nodes were processed, a cycle exists
+	if len(processed) < nodeCount {
+		var remaining []string
+		for name := range g.Modules {
+			if !processed[name] {
+				remaining = append(remaining, name)
+			}
+		}
+		cycleInfo := fmt.Sprintf("cycle detected in dependency graph involving modules: %v", remaining)
+		for _, name := range remaining {
+			deps := g.GetDeps(name)
+			if len(deps) > 0 {
+				cycleInfo += fmt.Sprintf("; %s depends on %v", name, deps)
+			}
+		}
+		return nil, fmt.Errorf("%s", cycleInfo)
 	}
 
 	return levels, nil

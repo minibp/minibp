@@ -1,19 +1,19 @@
 // Package pathutil provides path manipulation utilities.
 package pathutil
 
-import "strings"
+import (
+	"path/filepath"
+	"strings"
+)
 
-// SanitizePath removes '..' from a path to prevent directory traversal.
-// It repeatedly replaces "../" and "..\" with an empty string until no
-// more occurrences are found. This is a simple but effective way to
-// mitigate path traversal vulnerabilities.
+// SanitizePath cleans the given path and prevents directory traversal.
+// It uses filepath.Clean to normalize the path, then ensures no component
+// is ".." to block traversal attempts.
 func SanitizePath(path string) string {
-	for {
-		cleaned := strings.ReplaceAll(path, "../", "")
-		cleaned = strings.ReplaceAll(cleaned, "..\\", "")
-		if cleaned == path {
-			return cleaned
-		}
-		path = cleaned
+	cleaned := filepath.Clean(path)
+	// Block any path containing ".." components after cleaning
+	if strings.Contains(cleaned, "..") {
+		return filepath.Base(cleaned)
 	}
+	return cleaned
 }

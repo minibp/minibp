@@ -151,11 +151,18 @@ func NewManager(workDir string) (*Manager, error) {
 //
 // This function reads the dep.json file from disk and parses its JSON content,
 // loading the file hash values recorded in the file into memory (m.hashes).
-// Returns error if file doesn't exist or format is invalid.
+// The dep file contains version information and file hashes for incremental builds.
+//
+// How it works:
+//  1. Checks file size to prevent OOM from oversized files (10MB limit)
+//  2. Reads the entire file content
+//  3. Parses JSON into the DepFile struct
+//  4. Copies the Hashes map into memory
 //
 // Returns:
-//   - error: Returns error if file read fails or JSON parsing fails
+//   - error: Returns error if file read fails, file is too large, or JSON parsing fails
 //   - File not found: Returns os.PathError
+//   - File too large: Returns error if dep.json exceeds 10MB
 //   - Invalid JSON format: Returns json.UnmarshalError
 //   - Success: Returns nil
 //
@@ -163,6 +170,7 @@ func NewManager(workDir string) (*Manager, error) {
 //   - If dep.json exists but Hashes field is null, initializes to empty map
 //   - If dep.json exists but format version doesn't match, still attempts to load (only uses Hashes field)
 //   - Caller should handle returned error, typically choosing to start fresh rather than fail
+//   - Empty dep.json file returns empty hash map (not an error)
 //
 // Example dep.json content:
 //
@@ -173,6 +181,16 @@ func NewManager(workDir string) (*Manager, error) {
 //	  }
 //	}
 func (m *Manager) loadDepFile() error {
+	// Check file size before reading to prevent OOM
+	info, err := os.Stat(m.depFile)
+	if err != nil {
+		return err
+	}
+	const maxDepFileSize = 10 << 20 // 10MB limit
+	if info.Size() > maxDepFileSize {
+		return fmt.Errorf("dep file too large: %d bytes (max %d)", info.Size(), maxDepFileSize)
+	}
+
 	// Read raw content of dep.json file.
 	// Returns error if file doesn't exist or cannot be read.
 	data, err := os.ReadFile(m.depFile)
@@ -211,7 +229,7 @@ func (m *Manager) loadDepFile() error {
 //
 // Edge cases:
 //   - If m.hashes is empty map, still writes a valid JSON file (hashes as empty object)
-//   - File permission set to 0644 (owner read/write, group and others read-only)
+//   - File permission set to 0640 (owner read/write, group read-only)
 //   - Write failure doesn't rollback previous state
 //
 // Example dep.json output:
@@ -224,7 +242,7 @@ func (m *Manager) loadDepFile() error {
 //	  }
 //	}
 func (m *Manager) SaveDepFile() error {
-	// Construct DepFile struct with current hash values for serialization.
+	// Construct DepFile struct with current hash and mtime values for serialization.
 	// Version is set to 1; this allows future format changes with backward compatibility.
 	dep := DepFile{
 		Version: 1,
@@ -236,9 +254,9 @@ func (m *Manager) SaveDepFile() error {
 	if err != nil {
 		return fmt.Errorf("marshal dep file: %w", err)
 	}
-	// Write dep.json file with 0644 permissions (owner read/write, others read-only).
+	// Write dep.json file with 0640 permissions (owner r/w, group read-only).
 	// Overwrites existing file if present; creates new file if not.
-	return os.WriteFile(m.depFile, data, 0644)
+	return os.WriteFile(m.depFile, data, 0640)
 }
 
 // hashFile computes the SHA256 hash of the specified file's content.
@@ -332,21 +350,17 @@ func (m *Manager) hashFile(path string) (string, error) {
 //	    cached, _ := mgr.LoadJSON("src/foo/Android.bp")
 //	}
 func (m *Manager) NeedsReparse(bpFile string) (bool, error) {
-	// Compute current hash value of the file.
-	// This is used to detect if the file content has changed since last build.
+	// Compute current hash value of the file (skip mtime check for debugging)
 	currentHash, err := m.hashFile(bpFile)
 	if err != nil {
 		// Hash computation failed; conservatively assume reparse is needed.
-		// This ensures we don't use stale cache when file can't be read.
 		return true, fmt.Errorf("hash %s: %w", bpFile, err)
 	}
 
 	// Check if we have a stored hash value for this file.
-	// If not, this is the first time we're seeing this file.
-	storedHash, exists := m.hashes[bpFile]
-	if !exists {
+	storedHash, hashExists := m.hashes[bpFile]
+	if !hashExists {
 		// First time seeing this file; record hash and signal reparse needed.
-		// The actual parsing will happen in the caller.
 		m.hashes[bpFile] = currentHash
 		return true, nil
 	}
@@ -358,7 +372,7 @@ func (m *Manager) NeedsReparse(bpFile string) (bool, error) {
 		return true, nil
 	}
 
-	// File unchanged; cache can be used (caller should call LoadJSON).
+	// File unchanged; cache can be used.
 	return false, nil
 }
 
@@ -493,8 +507,8 @@ func (m *Manager) SaveJSON(bpFile string, file *parser.File) error {
 		return fmt.Errorf("marshal ast to json: %w", err)
 	}
 
-	// Write the serialized AST to the cache file with 0644 permissions.
-	return os.WriteFile(jsonPath, data, 0644)
+	// Write the serialized AST to the cache file with 0600 permissions (owner only).
+	return os.WriteFile(jsonPath, data, 0600)
 }
 
 // LoadJSON loads a previously parsed File AST from JSON cache file.

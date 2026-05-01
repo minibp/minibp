@@ -358,9 +358,9 @@ func readFile(path string) ([]byte, error) {
 // Edge cases:
 //   - Existing file: content is truncated and overwritten (not appended).
 //   - Parent directories: must exist; will not create them automatically.
-//   - Permissions: file is created with 0644 (rw-r--r--) mode.
+//   - Permissions: file is created with 0600 (owner read/write only) mode.
 //   - Empty data: creates an empty file (truncates if exists).
 //   - Symlinks: writes to target of symlink, not the symlink itself.
 func writeFile(path string, data []byte) error {
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0600)
 }

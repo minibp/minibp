@@ -87,14 +87,27 @@ func (m *Module) String() string {
 // They consist of an ordered list of Property nodes, preserving the
 // order in which properties were defined in the source.
 type Map struct {
-	Properties []*Property      // Ordered list of properties in the map
-	LBracePos  scanner.Position // Position of the opening { brace
-	RBracePos  scanner.Position // Position of the closing } brace
+	Properties []*Property          // Ordered list of properties in the map
+	LBracePos  scanner.Position     // Position of the opening { brace
+	RBracePos  scanner.Position     // Position of the closing } brace
+	propMap    map[string]*Property // Lazily initialized cache for O(1) lookup
 }
 
 // Pos returns the position of the opening brace.
 // Used for error reporting.
 func (m *Map) Pos() scanner.Position { return m.LBracePos }
+
+// GetPropMap returns a map of property names to Property pointers for O(1) lookup.
+// The map is lazily initialized and cached. Subsequent calls return the cached map.
+func (m *Map) GetPropMap() map[string]*Property {
+	if m.propMap == nil {
+		m.propMap = make(map[string]*Property, len(m.Properties))
+		for _, prop := range m.Properties {
+			m.propMap[prop.Name] = prop
+		}
+	}
+	return m.propMap
+}
 
 // String returns a string representation of the map.
 // Format: "{ prop1: value1, prop2: value2, ... }"

@@ -47,6 +47,8 @@ A minimal Android.bp (Blueprint) parser and Ninja build file generator written i
 
 - **exec_script() extension** (minibp-specific, not standard Soong): Run external scripts during Blueprint parsing/evaluation phase. Captures stdout as expression value, with automatic JSON parsing for structured output.
 
+- **Incremental builds**: SHA256-based file hash caching with AST JSON serialization in `.minibp/` directory
+
 ## Usage
 
 ```bash

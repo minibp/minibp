@@ -8,6 +8,15 @@
 // with the global registry. This allows the build system to be extended without
 // modifying core code.
 //
+// Design decisions:
+//   - Module interface: Minimal interface allows easy implementation by new types.
+//     Each method returns a specific category of module information.
+//   - BaseModule struct: Uses composition (embedding) to provide common fields.
+//     Fields use trailing underscores to avoid conflicts with method names.
+//   - Factory pattern: Decouples AST parsing from module creation, enabling
+//     custom module types without modifying the build pipeline.
+//   - Thread-safe registry: Uses RWMutex for optimal read-heavy workloads.
+//
 // Core components:
 //   - Module interface: Unified API for accessing module properties
 //   - BaseModule: Common implementation with shared fields
@@ -21,57 +30,81 @@ package module
 // The build system uses this interface to work with modules generically
 // during dependency resolution, build graph construction, and ninja file generation.
 //
+// Description:
+// The Module interface is the core abstraction for build modules.
+// It provides methods to access:
+//   - Identification: Name and Type for referencing and distinguishing modules
+//   - Build configuration: Srcs and Deps for specifying what to build
+//   - Custom properties: Props and GetProp for arbitrary key-value settings
+//
 // Implementation notes:
 //   - Each method returns a specific category of module information
 //   - The interface is minimal to allow easy implementation by new module types
 //   - Returning slices/maps should return references to internal storage,
 //     not copies, for memory efficiency
-//
-// Each method provides:
-// - Name/Type: identification for referencing and distinguishing module types
-// - Srcs/Deps: build configuration specifying what to build and dependencies
-// - Props: arbitrary key-value properties for module-specific settings
+//   - Callers must NOT modify returned maps as they share storage with the module
 type Module interface {
 	// Name returns the unique name of this module within its package.
 	// This name is used to reference this module from other modules via
 	// the ":name" syntax in Blueprint files (e.g., "//path:modulename").
 	//
-	// The name must be unique within a single Blueprint package but different
-	// packages can have modules with the same name - they are distinguished
-	// by their full path (e.g., "//path/to/package:modulename").
+	// Description:
+	// Returns the module's unique identifier within its Blueprint package.
+	// The name must be unique within a single package but different packages
+	// can have modules with the same name - they are distinguished by their
+	// full path (e.g., "//path/to/package:modulename").
+	//
+	// How it works:
+	// Returns the Name_ field stored in the embedded BaseModule struct.
+	// The factory sets this field from the "name" property during module creation.
 	//
 	// Returns:
-	//   - The module's unique name within its package
+	//   - The module's unique name within its package (string)
 	Name() string
 
 	// Type returns the module type string that identifies this module's category.
 	// Common types include: "cc_library", "cc_binary", "go_library", "go_binary",
 	// "java_library", "java_binary", "proto_library", "filegroup", "genrule", etc.
 	//
+	// Description:
+	// Returns the module type identifier that determines how the module is built.
 	// The type string determines:
 	//   - Which factory was used to create this module
 	//   - How the module is built (compiler, linker, etc.)
 	//   - What ninja rules are generated for this module
 	//
+	// How it works:
+	// Returns the Type_ field stored in the embedded BaseModule struct.
+	// The factory sets this field from the AST module's Type field.
+	//
 	// Returns:
-	//   - The module type identifier string
+	//   - The module type identifier string (e.g., "cc_library", "go_binary")
 	Type() string
 
 	// Srcs returns the list of source files for this module.
 	// Paths are relative to the Blueprint file location where the module is defined.
+	//
+	// Description:
+	// Returns the source files that need to be compiled or processed for this module.
 	// The returned slice may be empty if the module has no sources, for example:
 	//   - A cc_library_headers module that only provides header files
 	//   - A filegroup that aggregates existing files
 	//   - A phony target that doesn't produce build artifacts
 	//
+	// How it works:
+	// Returns the Srcs_ field stored in the embedded BaseModule struct.
+	// The factory sets this field from the "srcs" property during module creation.
+	//
 	// Returns:
-	//   - A slice of source file paths, may be empty but never nil
+	//   - A slice of source file paths (may be empty but never nil)
 	Srcs() []string
 
 	// Deps returns the list of direct dependency module names.
 	// Each dependency is referenced by its module name using the ":name" format,
 	// or by full path "//namespace:module" for cross-namespace references.
 	//
+	// Description:
+	// Returns the direct dependencies that this module depends on for building.
 	// Important notes:
 	//   - The returned slice does NOT include transitive dependencies
 	//   - The build system resolves the full dependency tree separately
@@ -81,20 +114,32 @@ type Module interface {
 	//     - Link order (for linking libraries)
 	//     - Runtime dependency tracking
 	//
+	// How it works:
+	// Returns the Deps_ field stored in the embedded BaseModule struct.
+	// The factory sets this field from the "deps", "shared_libs", and "header_libs"
+	// properties during module creation, with deduplication.
+	//
 	// Returns:
-	//   - A slice of dependency module names, may be empty but never nil
+	//   - A slice of dependency module names (may be empty but never nil)
 	Deps() []string
 
 	// Props returns all properties as a map for generic access.
 	// This includes both built-in properties (name, srcs, deps) and any
 	// additional custom properties defined in the Blueprint file.
 	//
+	// Description:
+	// Returns all module properties as a map for generic access.
 	// The map contains:
 	//   - All properties from the Blueprint module definition
 	//   - Values are evaluated (variables resolved, expressions computed)
 	//   - Nested structures are preserved as map[string]interface{} or []interface{}
 	//
-	// Implementation note:
+	// How it works:
+	// Returns a reference to the internal Properties map stored in the BaseModule struct.
+	// The factory populates this map during module creation by extracting all properties
+	// from the AST, converting each property value to native Go types.
+	//
+	// Important notes:
 	//   - Returns a reference to the internal property storage, not a copy
 	//   - Callers should NOT modify the returned map as it affects internal state
 	//
@@ -105,6 +150,17 @@ type Module interface {
 	// GetProp retrieves a specific property value by key.
 	// This is a convenience method for accessing a single property
 	// without iterating over the entire Props map.
+	//
+	// Description:
+	// Looks up a property by name in the internal properties map.
+	// This is equivalent to m.Props()[key] but provides a cleaner API.
+	//
+	// How it works:
+	// Looks up the key in the internal BaseModule.Props_ map and returns the value.
+	// If the key doesn't exist, returns nil.
+	//
+	// Parameters:
+	//   - key: The property name to look up
 	//
 	// Returns:
 	//   - The property value if found (string, int, bool, []interface{}, or map[string]interface{})
@@ -120,9 +176,18 @@ type Module interface {
 // It embeds the core fields that all module types share, following the
 // composition pattern for code reuse.
 //
-// Module types embed BaseModule (either directly or via embedding another
-// module type struct that embeds BaseModule) and add their specific fields.
-// For example:
+// Description:
+// BaseModule is a reusable struct that provides the common fields required
+// by all module types. Module types embed BaseModule (either directly or
+// via embedding another module type struct that embeds BaseModule) and add
+// their specific fields.
+//
+// How it works:
+// The struct uses Go's embedding feature to provide all Module interface
+// methods through composition. Embedding types can override methods if needed,
+// but typically they inherit the default implementations.
+//
+// Example:
 //
 //	type CCLibrary struct {
 //	    module.BaseModule  // embeds BaseModule
@@ -135,7 +200,7 @@ type Module interface {
 //   - Adding type-specific fields without duplicating code
 //   - Maintaining the Module interface through embedding
 //
-// Note:
+// Design decisions:
 //   - Fields use trailing underscores (Name_, Type_, etc.) to avoid conflicts
 //     with method names in embedding types that might want to use the same names
 //
@@ -166,45 +231,86 @@ type BaseModule struct {
 }
 
 // Name returns the module name from the Name_ field.
-// This implements the Module interface method Name().
+//
+// Description:
+// Implements the Module interface method Name().
+// Returns the module's unique identifier within its Blueprint package.
+//
+// How it works:
+// Simply returns the Name_ field value.
 //
 // Returns:
-//   - The Name_ field value, which is always set for valid modules
+//   - The Name_ field value (string)
 func (m *BaseModule) Name() string { return m.Name_ }
 
 // Type returns the module type string from the Type_ field.
-// This implements the Module interface method Type().
+//
+// Description:
+// Implements the Module interface method Type().
+// Returns the module type identifier that determines how the module is built.
+//
+// How it works:
+// Simply returns the Type_ field value.
 //
 // Returns:
 //   - The Type_ field value (e.g., "cc_library", "go_binary")
 func (m *BaseModule) Type() string { return m.Type_ }
 
 // Srcs returns the list of source files from the Srcs_ field.
-// This implements the Module interface method Srcs().
+//
+// Description:
+// Implements the Module interface method Srcs().
+// Returns the source files that need to be compiled or processed.
+//
+// How it works:
+// Simply returns the Srcs_ field value.
 //
 // Returns:
-//   - The Srcs_ field value, a slice that may be empty but never nil
+//   - The Srcs_ field value (a slice that may be empty but never nil)
 func (m *BaseModule) Srcs() []string { return m.Srcs_ }
 
 // Deps returns the list of dependency module names from the Deps_ field.
-// This implements the Module interface method Deps().
+//
+// Description:
+// Implements the Module interface method Deps().
+// Returns the direct dependencies for this module.
+//
+// How it works:
+// Simply returns the Deps_ field value.
 //
 // Returns:
-//   - The Deps_ field value, a slice that may be empty but never nil
+//   - The Deps_ field value (a slice that may be empty but never nil)
 func (m *BaseModule) Deps() []string { return m.Deps_ }
 
 // Props returns a reference to the internal properties map from the Props_ field.
-// This implements the Module interface method Props().
 //
-// IMPORTANT: Returns the internal map reference, not a copy.
+// Description:
+// Implements the Module interface method Props().
+// Returns all module properties as a map for generic access.
+//
+// How it works:
+// Returns the internal Props_ map reference directly, not a copy.
+//
+// Important:
+// Returns the internal map reference, not a copy.
 // Callers must not modify the returned map as it shares storage with the module.
 //
 // Returns:
-//   - The Props_ field value, the internal map storage
+//   - The Props_ field value (the internal map storage)
 func (m *BaseModule) Props() map[string]interface{} { return m.Props_ }
 
 // GetProp looks up a property by key in the Props_ map and returns its value.
-// This implements the Module interface method GetProp().
+//
+// Description:
+// Implements the Module interface method GetProp().
+// Provides convenient access to individual property values.
+//
+// How it works:
+// Looks up the key in the internal Props_ map and returns the value.
+// Returns nil if the key doesn't exist.
+//
+// Parameters:
+//   - key: The property name to look up
 //
 // Returns:
 //   - The property value if the key exists in Props_

@@ -1,10 +1,17 @@
 // rules.go - Ninja rule interface and rule registry for minibp.
 //
-// This file defines the BuildRule interface that all ninja rule implementations must satisfy,
-// the RuleRenderContext for toolchain configuration, and utility functions for module
-// references, visibility, and defaults processing.
+// Package ninja provides utilities for generating Ninja build files from
+// Blueprint module definitions. This file (rules.go) defines the core interfaces,
+// rule rendering context, and utility functions for module property handling.
 //
-// Architecture Overview:
+// Design decisions:
+//   - Uses an interface (BuildRule) to define rule implementations
+//   - Uses a struct (RuleRenderContext) to pass toolchain configuration
+//   - Provides a flat list of rules (not a registry pattern)
+//   - Supports cross-namespace module references
+//   - Supports visibility rules for module access control
+//
+// Architecture:
 //
 //   - BuildRule interface: Defines 5 methods that each rule type must implement
 //   - RuleRenderContext: Holds toolchain configuration (compiler paths, flags, LTO, sysroot)
@@ -12,21 +19,6 @@
 //   - ApplyDefaults: Merges properties from defaults modules into target modules
 //   - ModuleReference: Parses ":module" and ":module{.tag}" references
 //   - Visibility: Validates visibility rules like "//visibility:public"
-//
-// The BuildRule interface is implemented by all module types (cc_library, go_binary, etc.)
-// and provides the bridge between the Blueprint AST and the generated Ninja build file.
-//
-// Visibility rules supported:
-//   - //visibility:public: Visible to all modules
-//   - //visibility:private: Visible only within the same package
-//   - //visibility:override: Override parent's visibility
-//   - //visibility:legacy_public: Legacy public visibility
-//   - //visibility:any_partition: Visible to any partition
-//   - //package:__pkg__: Visible to current package
-//   - //package:__subpackages__: Visible to current package and subpackages
-//
-// This file provides the core interfaces and utilities for rule registration
-// and module property handling in the Ninja build system.
 package ninja
 
 import (
@@ -35,42 +27,32 @@ import (
 )
 
 // BuildRule is the interface for all ninja rule implementations.
-// Each rule type (cc_library, go_binary, java_library, etc.) must implement these methods
-// to participate in the Ninja build file generation.
 //
-// Implementations are responsible for:
-//   - Generating Ninja rule definitions (NinjaRule method)
-//   - Creating build edges for modules (NinjaEdge method)
-//   - Listing output files (Outputs method)
-//   - Providing human-readable descriptions (Desc method)
+// Description:
 //
-// Method purpose:
-//   - Name(): Unique identifier for this rule type (e.g., "cc_library", "go_binary")
-//   - Used to match module types in Blueprint files
-//   - Used by GetRule() to find rule implementations
-//   - NinjaRule(): Returns ninja rule definitions as a string (multiple rules separated by newlines)
-//   - Defines how to compile, link, archive, or package files
-//   - Called once per rule type during ninja file generation
-//   - NinjaEdge(): Returns ninja build edges for a specific module (what to build)
-//   - Called once per module instance
-//   - Generates the actual build commands for the module's sources
-//   - Outputs(): Returns the output file paths produced by this rule
-//   - Used for dependency resolution and build order determination
-//   - May include architecture suffix for multi-arch builds
-//   - Desc(): Returns a description string for build logging (e.g., "gcc", "jar", "go")
-//   - Displayed by ninja during the build process
-//   - Empty srcFile means this is a linking/packaging step
-//   - Non-empty srcFile means this is a compilation step
+//	Each rule type (cc_library, go_binary, java_library, etc.) must implement these methods
+//	to participate in the Ninja build file generation.
+//
+// How it works:
+//
+//	The build system iterates over all modules, finds their matching BuildRule implementation,
+//	and calls the appropriate methods to generate ninja rules and build edges.
+//
+// Methods:
+//   - Name(): Returns the module type name (e.g., "cc_library")
+//   - NinjaRule(): Returns ninja rule definitions (called once per rule type)
+//   - NinjaEdge(): Returns ninja build edges for a module (called once per module)
+//   - Outputs(): Returns output file paths for a module
+//   - Desc(): Returns description string for build logging
 //
 // Key design decisions:
-//   - The interface separates rule definition (NinjaRule), build edges (NinjaEdge), outputs (Outputs), and descriptions (Desc) to allow each rule type to customize each aspect independently.
-//   - Desc() uses srcFile to distinguish between compilation (non-empty srcFile) and linking/packaging (empty srcFile) steps, enabling more informative build logging.
-//   - Outputs() includes architecture suffixes for multi-arch builds, allowing the build system to handle multiple architectures in a single build.
+//   - Separates rule definition from build edges for flexibility
+//   - Uses srcFile to distinguish compilation from linking steps
+//   - Outputs() includes architecture suffixes for multi-arch builds
 //
 // Edge cases:
 //   - Empty srcs should still produce valid rule output
-//   - Missing required properties should produce error messages in Desc()
-//   - Multiple architecture variants should be handled by Outputs()
+//   - Missing properties: May return nil outputs or error messages
 type BuildRule interface {
 	Name() string
 	NinjaRule(ctx RuleRenderContext) string
@@ -80,55 +62,40 @@ type BuildRule interface {
 }
 
 // RuleRenderContext holds the toolchain configuration used when rendering ninja rules.
-// It is passed to each rule's methods to generate tool-specific commands and flags.
 //
-// This context is initialized from command-line flags (-cc, -cxx, -ar, -lto, -sysroot, -ccache)
-// and build configuration. It provides the information needed to generate correct
-// compiler invocations for each module.
+// Description:
+//
+//	This struct contains all the toolchain and build configuration information
+//	needed to generate ninja rules and build edges. It is passed to each
+//	rule's methods during ninja file generation.
+//
+// How it works:
+//
+//	The context is initialized from command-line flags and build configuration.
+//	Each rule method uses this information to generate correct commands.
 //
 // Fields:
-//   - CC: C compiler command (e.g., "gcc", "clang", "/usr/bin/clang")
-//   - Used for linking and C compilation
-//   - May be prefixed with ccache path if ccache is enabled
-//   - CXX: C++ compiler command (e.g., "g++", "clang++", "/usr/bin/clang++")
-//   - Used for C++ compilation
-//   - Selected by detectCompilerType based on file extensions
-//   - AR: Static library archiver (e.g., "ar", "gcc-ar", "llvm-ar")
-//   - For LTO builds, ltoArchiveCmd may select an LTO-compatible archiver
-//   - ArchSuffix: Architecture-specific suffix for outputs (e.g., "_arm64", "_x86_64")
-//   - Appended to output file names for multi-architecture builds
-//   - Set by the build system based on current build variant
-//   - CFlags: Global C/C++ compiler flags (e.g., "-Wall -g")
-//   - Merged with module-specific cflags and cppflags
-//   - Applied to all C/C++ compilation commands
-//   - LdFlags: Global linker flags (e.g., "-lpthread")
-//   - Merged with module-specific ldflags
-//   - Applied to all linking commands
-//   - Sysroot: Cross-compilation sysroot path (e.g., "/opt/cross/arm64")
-//   - Used for cross-compilation to provide target system headers/libraries
-//   - May be passed to compiler/linker via --sysroot= flag
-//   - Ccache: Path to ccache binary (empty if ccache is not available)
-//   - When set, prepended to compiler commands for caching
-//   - Speeds up incremental builds by caching compilation results
-//   - Lto: Default LTO mode ("full", "thin", or "" for no LTO)
-//   - Can be overridden by module-level LTO settings
-//   - Affects both compilation and linking flags
-//   - GOOS: Go target operating system (e.g., "linux", "darwin", "windows")
-//   - Used for Go cross-compilation
-//   - Set as environment variable GOOS=X for go build
-//   - GOARCH: Go target architecture (e.g., "amd64", "arm64")
-//   - Used for Go cross-compilation
-//   - Set as environment variable GOARCH=Y for go build
-//   - PathPrefix: Prefix for file paths (used for namespace support)
-//   - Prepended to dependency file paths
-//   - Enables cross-namespace module references
+//   - CC: C compiler command (e.g., "gcc")
+//   - CXX: C++ compiler command (e.g., "g++")
+//   - LD: Linker command (optional, defaults to CC/CXX)
+//   - AR: Static library archiver (e.g., "ar")
+//   - ArchSuffix: Architecture suffix for outputs (e.g., "_arm64")
+//   - CFlags: Global C/C++ compiler flags
+//   - LdFlags: Global linker flags
+//   - Sysroot: Cross-compilation sysroot path
+//   - Ccache: Path to ccache binary
+//   - Lto: Default LTO mode ("full", "thin", or "")
+//   - GOOS: Go target OS (e.g., "linux")
+//   - GOARCH: Go target architecture (e.g., "amd64")
+//   - PathPrefix: Prefix for dependency file paths
+//   - Modules: Map of all modules for dependency resolution
+//   - GoModulePath: Go module path
+//   - GoImportPrefix: Go import prefix
 //
 // Key design decisions:
-//   - Uses a struct to pass toolchain configuration to all rule rendering methods, avoiding global state.
-//   - Includes both tool paths (CC, CXX, AR) and flags (CFlags, LdFlags) to allow complete command generation.
-//   - Supports cross-compilation via GOOS/GOARCH and Sysroot fields.
-//   - PathPrefix enables namespace support for cross-namespace module references.
-//   - Modules map is included for resolving cross-module dependencies during rendering.
+//   - Uses struct to pass configuration, avoiding global state
+//   - Includes both tool paths and flags for complete command generation
+//   - Supports cross-compilation via GOOS/GOARCH and Sysroot
 type RuleRenderContext struct {
 	CC             string
 	CXX            string
