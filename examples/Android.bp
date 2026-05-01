@@ -287,6 +287,6 @@ cc_library {
 // Should inherit the exported flags in its compile and link commands
 cc_binary {
     name: "test_export",
-    srcs: ["main.c"],
+    srcs: ["test_export.c"],
     deps: [":libexport_test"],
 }

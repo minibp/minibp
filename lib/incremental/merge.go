@@ -24,6 +24,7 @@ import (
 
 	"minibp/lib/errors"
 	"minibp/lib/parser"
+	"minibp/lib/pathutil"
 )
 
 // BuildJSON represents the merged build.json structure.
@@ -338,7 +339,11 @@ func readFileContent(path string) ([]byte, error) {
 //   - Directory path: returns error "is a directory".
 //   - File larger than available memory: returns error or panics (OS-dependent).
 func readFile(path string) ([]byte, error) {
-	return os.ReadFile(path)
+	safePath := pathutil.SanitizePath(path)
+	if safePath != path {
+		return nil, fmt.Errorf("invalid path: %s", path)
+	}
+	return pathutil.ReadFileSafely(safePath, 10<<20)
 }
 
 // writeFile writes data to a file on disk.

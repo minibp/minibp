@@ -32,12 +32,12 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"minibp/lib/parser"
+	"minibp/lib/pathutil"
 )
 
 // DepFile represents the data structure of the .minibp/dep.json dependency file.
@@ -287,26 +287,18 @@ func (m *Manager) SaveDepFile() error {
 //	}
 //	fmt.Println(hash) // Output similar to: a1b2c3d4e5f6...
 func (m *Manager) hashFile(path string) (string, error) {
-	// Open file for reading.
-	// Returns error if file doesn't exist or lacks read permissions.
-	f, err := os.Open(path)
-	if err != nil {
-		return "", fmt.Errorf("open file for hash: %w", err)
+	safePath := pathutil.SanitizePath(path)
+	if safePath != path {
+		return "", fmt.Errorf("invalid path: %s", path)
 	}
-	// Ensure file is closed when function returns.
-	// Using defer ensures closure even if errors occur during reading.
-	defer f.Close()
 
-	// Initialize SHA256 hash calculator.
-	// The hash is computed incrementally as data is streamed to it.
-	h := sha256.New()
-	// Stream file content to hash calculator.
-	// io.Copy reads from file and writes to hash, computing digest incrementally.
-	if _, err := io.Copy(h, f); err != nil {
-		return "", fmt.Errorf("hash file content: %w", err)
+	data, err := pathutil.ReadFileSafely(safePath, 10<<20)
+	if err != nil {
+		return "", fmt.Errorf("read file for hash: %w", err)
 	}
-	// Compute final hash value and format as lowercase hex string (64 chars).
-	// Sum(nil) finalizes the hash and returns the digest bytes.
+
+	h := sha256.New()
+	h.Write(data)
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 

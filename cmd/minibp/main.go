@@ -25,15 +25,17 @@ var (
 	// openInputFile opens a file for reading.
 	// Used for dependency injection in tests.
 	openInputFile func(path string) (io.ReadCloser, error) = func(path string) (io.ReadCloser, error) {
-		// Sanitize path to prevent directory traversal attacks.
-		// This ensures that files outside the intended directory cannot be accessed.
+		f, err := os.Open(filepath.Clean(path))
+		if err != nil {
+			return nil, err
+		}
 		cleanPath := pathutil.SanitizePath(path)
 		if cleanPath != path {
-			// Path traversal attempt detected - reject the path for security.
+			f.Close()
 			return nil, errors.Config("invalid path: contains '..'").
 				WithSuggestion("Use absolute paths or paths within the project directory")
 		}
-		return os.Open(filepath.Clean(path))
+		return f, nil
 	}
 
 	// createOutputFile creates a file for writing.
@@ -342,59 +344,23 @@ func parseDefinitionsFromFiles(files []string) ([]parser.Definition, error) {
 		// or contains directory traversal attempts (e.g., "../").
 		f, err := openInputFile(file)
 		if err != nil {
-			// Failed to open file - likely file not found or permission issue.
 			return nil, errors.NotFound(file).
 				WithCause(err).
 				WithSuggestion("Check that the file exists and has read permissions")
 		}
 
-		// Read source content for error display.
-		// We need the raw source text to provide meaningful error messages
-		// with line numbers and context when parsing fails.
-		// This is stored as a string and passed to the parser alongside the file handle.
 		source, readErr := io.ReadAll(f)
 		f.Close()
 		if readErr != nil {
-			// Failed to read file contents - could be disk error or file truncated.
 			return nil, errors.NotFound(file).
 				WithCause(readErr).
 				WithSuggestion("Check file integrity and disk health")
 		}
 
-		// Re-open file for parsing.
-		// The parser expects an io.Reader to read the file content.
-		// We re-open rather than using strings.NewReader(source) because
-		// the parser interface expects a file for proper source mapping.
-		f, err = openInputFile(file)
-		if err != nil {
-			// Failed to open file - likely file not found or permission issue.
-			return nil, errors.NotFound(file).
-				WithCause(err).
-				WithSuggestion("Check that the file exists and has read permissions")
-		}
-
-		// Parse the Blueprint file into an AST.
-		// The parser handles:
-		//   - Lexical analysis: Tokenizes the source into keywords, strings, numbers, operators
-		//   - Syntax parsing: Builds module declarations, property assignments, expressions
-		//   - Expression evaluation: Resolves ${var} references and select() variants
-		// Returns error for syntax errors, unknown modules, or evaluation failures.
-		// The source parameter enables the parser to report errors with line/column numbers.
-		parsedFile, parseErr := parseBlueprintFile(f, file, string(source))
-		closeErr := f.Close()
+		parsedFile, parseErr := parseBlueprintFile(strings.NewReader(string(source)), file, string(source))
 		if parseErr != nil {
-			// Collect parse error rather than failing immediately.
-			// This allows checking all files in one pass so the user
-			// can see all syntax errors at once.
 			parseErrors = append(parseErrors, parseErr.Error())
 			continue
-		}
-		if closeErr != nil {
-			// Report close error but don't mask earlier parse error.
-			// If we got here, parse succeeded, but we still report the close error.
-			return nil, errors.Config(fmt.Sprintf("failed to close file: %s", file)).
-				WithCause(closeErr).
-				WithSuggestion("Check disk health and file system integrity")
 		}
 		// Append definitions from this file to the combined result.
 		// Each parser.File contains a Defs slice with all definitions in that file.
@@ -472,45 +438,21 @@ func parseDefinitionsIncrementally(mgr *incremental.Manager, files []string) ([]
 		// If we don't have a parsed file (either needs reparse or cache miss),
 		// parse the file from scratch.
 		if parsedFile == nil {
-			// Need to parse the file.
-			// Open the file for reading; uses openInputFile for testability.
 			f, err := openInputFile(file)
 			if err != nil {
 				return nil, fmt.Errorf("error opening %s: %w", file, err)
 			}
 
-			// Read the entire file content into memory.
-			// We need the source text for error reporting (line numbers, context).
-			// The parser doesn't use this directly but it's passed for error messages.
 			source, readErr := io.ReadAll(f)
 			f.Close()
 			if readErr != nil {
 				return nil, fmt.Errorf("error reading %s: %w", file, readErr)
 			}
 
-			// Re-open file for parsing.
-			// The parser expects an io.Reader, so we need a fresh file handle.
-			// (Alternatively, we could use strings.NewReader(source), but the
-			// parser interface expects a file for source mapping.)
-			f, err = openInputFile(file)
-			if err != nil {
-				return nil, fmt.Errorf("error opening %s: %w", file, err)
-			}
-
-			// Parse the Blueprint file into an AST.
-			// The parser produces a parser.File containing:
-			//   - Defs: All definitions (modules, assignments) in the file
-			//   - Source mapping for error reporting
-			pf, parseErr := parseBlueprintFile(f, file, string(source))
-			closeErr := f.Close()
+			pf, parseErr := parseBlueprintFile(strings.NewReader(string(source)), file, string(source))
 			if parseErr != nil {
-				// Collect parse error rather than failing immediately.
-				// This matches the behavior of parseDefinitionsFromFiles.
 				parseErrors = append(parseErrors, parseErr.Error())
 				continue
-			}
-			if closeErr != nil {
-				return nil, fmt.Errorf("error closing %s: %w", file, closeErr)
 			}
 			parsedFile = pf
 

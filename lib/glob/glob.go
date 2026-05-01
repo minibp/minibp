@@ -229,6 +229,9 @@ func expandGlob(pattern, baseDir string) ([]string, error) {
 			// Skip directories; pattern matching applies to files only
 			// Also propagate any walk errors
 			if err != nil || info.IsDir() {
+				if info != nil && info.IsDir() && skipWalkDir(info.Name()) {
+					return filepath.SkipDir
+				}
 				return err
 			}
 			// Skip symlinks to prevent directory traversal
@@ -312,6 +315,17 @@ func recursiveGlobRoot(pattern, baseDir string) string {
 	}
 	// Join prefix parts with baseDir to get walk root
 	return filepath.Join(append([]string{baseDir}, prefix...)...)
+}
+
+var skipDirs = map[string]bool{
+	".git":    true,
+	".minibp": true,
+	".hg":     true,
+	".svn":    true,
+}
+
+func skipWalkDir(name string) bool {
+	return skipDirs[name]
 }
 
 // matchRecursivePattern checks if a path matches a recursive glob pattern.

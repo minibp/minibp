@@ -40,6 +40,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	"minibp/lib/parser"
 )
@@ -704,8 +705,6 @@ func (g *Generator) Generate(w io.Writer) error {
 
 	var allOutputs []string
 	seenCleanOutputs := make(map[string]bool)
-	visited := make(map[string]bool)
-	includeSeen := make(map[string]bool)
 	sourceDir := g.sourceDir
 	if sourceDir == "." {
 		absPath, _ := filepath.Abs(g.sourceDir)
@@ -733,15 +732,10 @@ func (g *Generator) Generate(w io.Writer) error {
 				continue
 			}
 
-			for k := range visited {
-				delete(visited, k)
-			}
-			includes := g.collectIncludePaths(moduleName, visited)
+			includes := g.collectIncludePaths(moduleName, make(map[string]bool))
 
 			if strings.HasPrefix(m.Type, "cc_") || strings.HasPrefix(m.Type, "cpp_") {
-				for k := range includeSeen {
-					delete(includeSeen, k)
-				}
+				includeSeen := make(map[string]bool)
 				for _, inc := range includes {
 					includeSeen[inc] = true
 				}
@@ -1001,7 +995,36 @@ func (g *Generator) ruleRenderContextForArch(arch string) RuleRenderContext {
 	return ctx
 }
 
+var goModCache struct {
+	sync.RWMutex
+	m map[string]goModResult
+}
+
+type goModResult struct {
+	modulePath   string
+	importPrefix string
+}
+
 func detectGoModuleContext(sourceDir string) (modulePath string, importPrefix string) {
+	goModCache.RLock()
+	r, ok := goModCache.m[sourceDir]
+	goModCache.RUnlock()
+	if ok {
+		return r.modulePath, r.importPrefix
+	}
+
+	mp, ip := detectGoModuleContextUncached(sourceDir)
+
+	goModCache.Lock()
+	if goModCache.m == nil {
+		goModCache.m = make(map[string]goModResult)
+	}
+	goModCache.m[sourceDir] = goModResult{modulePath: mp, importPrefix: ip}
+	goModCache.Unlock()
+	return mp, ip
+}
+
+func detectGoModuleContextUncached(sourceDir string) (modulePath string, importPrefix string) {
 	absSourceDir, err := filepath.Abs(sourceDir)
 	if err != nil {
 		return "", ""

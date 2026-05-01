@@ -32,6 +32,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // interpolationPattern matches ${variable_name} patterns in strings.
@@ -695,9 +696,16 @@ func (e *Evaluator) evalSelectSingle(s *Select, configValue interface{}) interfa
 				}
 				continue
 			}
-			// Exact match comparison using reflect.DeepEqual for type-safe comparison
-			if p.Value != nil && reflect.DeepEqual(e.evalPatternValue(p.Value), configValue) {
-				return e.evalCaseValue(c, configValue)
+			// Exact match comparison - fast-path for common string case
+			if p.Value != nil {
+				patternVal := e.evalPatternValue(p.Value)
+				if cv, ok := configValue.(string); ok {
+					if pv, ok := patternVal.(string); ok && pv == cv {
+						return e.evalCaseValue(c, configValue)
+					}
+				} else if reflect.DeepEqual(patternVal, configValue) {
+					return e.evalCaseValue(c, configValue)
+				}
 			}
 		}
 	}
@@ -938,7 +946,29 @@ func (e *Evaluator) isConfigUnset(val interface{}) bool {
 //   - Function arguments are evaluated recursively (supports variable references in args)
 //   - For soong_config_variable, checks both "namespace.variable" and "soong_config.namespace.variable"
 //   - The fallback to config[FunctionName] allows extensibility for custom conditions
+type selectCondHandler func(e *Evaluator, cond ConfigurableCondition) interface{}
+
+var selectCondDispatch map[string]selectCondHandler
+var selectCondInitOnce sync.Once
+
+func initSelectCondDispatch() map[string]selectCondHandler {
+	return map[string]selectCondHandler{
+		"soong_config_variable": evalSoongConfigVar,
+		"release_flag":          evalReleaseFlag,
+		"variant":               evalVariantCond,
+		"product_variable":      evalProductVar,
+		"target":                evalTargetCond,
+		"arch":                  evalArchCond,
+		"host":                  evalHostCond,
+		"os":                    evalOSCond,
+	}
+}
+
 func (e *Evaluator) evalSelectCondition(cond ConfigurableCondition) interface{} {
+	selectCondInitOnce.Do(func() {
+		selectCondDispatch = initSelectCondDispatch()
+	})
+
 	if cond.FunctionName == "" {
 		if len(cond.Args) == 0 {
 			return nil
@@ -946,83 +976,88 @@ func (e *Evaluator) evalSelectCondition(cond ConfigurableCondition) interface{} 
 		return e.Eval(cond.Args[0])
 	}
 
-	// Handle soong_config_variable(namespace, variable)
-	if cond.FunctionName == "soong_config_variable" && len(cond.Args) >= 2 {
-		namespace := e.Eval(cond.Args[0])
-		variable := e.Eval(cond.Args[1])
-		nsStr, _ := namespace.(string)
-		varStr, _ := variable.(string)
-		if nsStr != "" && varStr != "" {
-			key := nsStr + "." + varStr
-			if val, ok := e.config[key]; ok {
-				return val
-			}
-			// Also check vars table for soong_config values set via CLI
-			if val, ok := e.vars["soong_config."+key]; ok {
-				return val
-			}
-		}
-		return nil
+	if handler, ok := selectCondDispatch[cond.FunctionName]; ok {
+		return handler(e, cond)
 	}
 
-	// Handle release_flag(flag)
-	if cond.FunctionName == "release_flag" && len(cond.Args) >= 1 {
-		flag := e.Eval(cond.Args[0])
-		flagStr, _ := flag.(string)
-		if flagStr != "" {
-			key := "release." + flagStr
-			if val, ok := e.config[key]; ok {
-				return val
-			}
-		}
-		return nil
-	}
-
-	// Handle variant(name)
-	if cond.FunctionName == "variant" {
-		if len(cond.Args) == 0 {
-			return e.config["variant"]
-		}
-		name := e.Eval(cond.Args[0])
-		if nameStr, ok := name.(string); ok && nameStr != "" {
-			return e.config["variant."+nameStr]
-		}
-		return nil
-	}
-
-	// Handle product_variable(name)
-	if cond.FunctionName == "product_variable" {
-		if len(cond.Args) == 0 {
-			return e.config["product"]
-		}
-		name := e.Eval(cond.Args[0])
-		if nameStr, ok := name.(string); ok && nameStr != "" {
-			return e.config["product."+nameStr]
-		}
-		return nil
-	}
-
-	// Check if it's a variable reference (function name is an empty string)
 	if len(cond.Args) == 0 {
 		if val, ok := e.vars[cond.FunctionName]; ok {
 			return val
 		}
 	}
+	return e.config[cond.FunctionName]
+}
 
-	// Switch on built-in function names
-	switch cond.FunctionName {
-	case "target":
-		return e.config["target"]
-	case "arch":
-		return e.config["arch"]
-	case "host":
-		return e.config["host"]
-	case "os":
-		return e.config["os"]
-	default:
-		// Fall back to config lookup
-		return e.config[cond.FunctionName]
+func evalSoongConfigVar(e *Evaluator, cond ConfigurableCondition) interface{} {
+	if len(cond.Args) < 2 {
+		return nil
 	}
+	namespace := e.Eval(cond.Args[0])
+	variable := e.Eval(cond.Args[1])
+	nsStr, _ := namespace.(string)
+	varStr, _ := variable.(string)
+	if nsStr != "" && varStr != "" {
+		key := nsStr + "." + varStr
+		if val, ok := e.config[key]; ok {
+			return val
+		}
+		if val, ok := e.vars["soong_config."+key]; ok {
+			return val
+		}
+	}
+	return nil
+}
+
+func evalReleaseFlag(e *Evaluator, cond ConfigurableCondition) interface{} {
+	if len(cond.Args) < 1 {
+		return nil
+	}
+	flag := e.Eval(cond.Args[0])
+	if flagStr, ok := flag.(string); ok && flagStr != "" {
+		key := "release." + flagStr
+		if val, ok := e.config[key]; ok {
+			return val
+		}
+	}
+	return nil
+}
+
+func evalVariantCond(e *Evaluator, cond ConfigurableCondition) interface{} {
+	if len(cond.Args) == 0 {
+		return e.config["variant"]
+	}
+	name := e.Eval(cond.Args[0])
+	if nameStr, ok := name.(string); ok && nameStr != "" {
+		return e.config["variant."+nameStr]
+	}
+	return nil
+}
+
+func evalProductVar(e *Evaluator, cond ConfigurableCondition) interface{} {
+	if len(cond.Args) == 0 {
+		return e.config["product"]
+	}
+	name := e.Eval(cond.Args[0])
+	if nameStr, ok := name.(string); ok && nameStr != "" {
+		return e.config["product."+nameStr]
+	}
+	return nil
+}
+
+func evalTargetCond(e *Evaluator, cond ConfigurableCondition) interface{} {
+	return e.config["target"]
+}
+
+func evalArchCond(e *Evaluator, cond ConfigurableCondition) interface{} {
+	return e.config["arch"]
+}
+
+func evalHostCond(e *Evaluator, cond ConfigurableCondition) interface{} {
+	return e.config["host"]
+}
+
+func evalOSCond(e *Evaluator, cond ConfigurableCondition) interface{} {
+	return e.config["os"]
 }
 
 // evalExecScript executes a script during the evaluation phase and returns its output.
@@ -1079,14 +1114,31 @@ func (e *Evaluator) evalExecScript(script *ExecScript) interface{} {
 	// Trim the output (remove trailing whitespace/newlines)
 	result := strings.TrimSpace(string(output))
 
-	// Try to parse as JSON (allows scripts to return structured data)
+	// Try to parse as JSON with nesting depth limit to prevent stack overflow
 	var jsonValue interface{}
-	if json.Unmarshal([]byte(result), &jsonValue) == nil {
+	if safeJSONUnmarshal([]byte(result), &jsonValue, 100) == nil {
 		return jsonValue
 	}
 
 	// Return as plain string if not valid JSON
 	return result
+}
+
+// safeJSONUnmarshal unmarshals JSON with a maximum nesting depth.
+func safeJSONUnmarshal(data []byte, v *interface{}, maxDepth int) error {
+	depth := 0
+	for _, b := range data {
+		switch b {
+		case '{', '[':
+			depth++
+			if depth > maxDepth {
+				return fmt.Errorf("JSON nesting exceeds max depth of %d", maxDepth)
+			}
+		case '}', ']':
+			depth--
+		}
+	}
+	return json.Unmarshal(data, v)
 }
 
 // isDefaultPattern checks if a pattern is the "default" pattern.

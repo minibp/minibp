@@ -138,16 +138,16 @@ func (r *configGen) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 		// In ninja, $${ becomes literal ${ in the output
 		sedArgs = append(sedArgs, "-e 's|$${\\define \\([^}]*\\)}|/* #undef \\1 */|g'")
 
-	// Write the build edge for the output file
-	// Use full path for input file
-	inputFile := filepath.Join(ctx.PathPrefix, configfile)
-	edges.WriteString(fmt.Sprintf("build %s: config_gen %s\n sed_args = %s\n", out, inputFile, strings.Join(sedArgs, " ")))
+		// Write the build edge for the output file
+		// Use full path for input file
+		inputFile := filepath.Join(ctx.PathPrefix, configfile)
+		edges.WriteString(fmt.Sprintf("build %s: config_gen %s\n sed_args = %s\n", out, inputFile, strings.Join(sedArgs, " ")))
 
-	// Write the phony target for the module name (test_config -> build/include/config.h)
-	moduleName := getName(m)
-	if moduleName != "" {
-		edges.WriteString(fmt.Sprintf("build %s: phony %s\n", moduleName, out))
-	}
+		// Write the phony target for the module name (test_config -> build/include/config.h)
+		moduleName := getName(m)
+		if moduleName != "" {
+			edges.WriteString(fmt.Sprintf("build %s: phony %s\n", moduleName, out))
+		}
 	}
 
 	return edges.String()

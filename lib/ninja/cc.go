@@ -553,7 +553,7 @@ func (r *ccLibrary) ninjaEdgeForVariant(m *parser.Module, ctx RuleRenderContext,
 	// Each source file is compiled to a separate .o object file with proper flags.
 	// Generate compile edges for each source file.
 	var edges strings.Builder
-	var objFiles []string
+	var objFiles = make([]string, 0, len(srcs))
 
 	for _, src := range srcs {
 		obj := objectOutputName(name, src)
@@ -777,7 +777,7 @@ func (r *ccLibraryStatic) NinjaEdge(m *parser.Module, ctx RuleRenderContext) str
 
 	// Generate compile edges for each source file.
 	var edges strings.Builder
-	var objFiles []string
+	var objFiles = make([]string, 0, len(srcs))
 	for _, src := range srcs {
 		obj := objectOutputName(name, src)
 		objFiles = append(objFiles, obj)
@@ -984,7 +984,7 @@ func (r *ccLibraryShared) NinjaEdge(m *parser.Module, ctx RuleRenderContext) str
 	}
 
 	var edges strings.Builder
-	var objFiles []string
+	var objFiles = make([]string, 0, len(srcs))
 	for _, src := range srcs {
 		obj := objectOutputName(name, src)
 		objFiles = append(objFiles, obj)
@@ -1490,7 +1490,7 @@ func (r *ccBinary) ninjaEdgeForVariant(m *parser.Module, ctx RuleRenderContext, 
 
 	// Generate compile edges for each source file.
 	var edges strings.Builder
-	var objFiles []string
+	var objFiles = make([]string, 0, len(srcs))
 
 	for _, src := range srcs {
 		obj := objectOutputName(name, src)
@@ -1695,7 +1695,7 @@ func ccTestEdge(m *parser.Module, ctx RuleRenderContext) string {
 	}
 	// Generate compile edges for each source file.
 	var edges strings.Builder
-	var objFiles []string
+	var objFiles = make([]string, 0, len(srcs))
 	for _, src := range srcs {
 		obj := objectOutputName(name, src)
 		objFiles = append(objFiles, obj)

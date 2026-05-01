@@ -39,7 +39,6 @@
 package hasher
 
 import (
-	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -50,6 +49,7 @@ import (
 	"strings"
 
 	"minibp/lib/parser"
+	"minibp/lib/pathutil"
 	"sync"
 )
 
@@ -353,17 +353,18 @@ func (h *Hasher) hashSourceFiles(module *parser.Module, w io.Writer) error {
 //   - string: A formatted string "file:<path>;hash:<hash>;".
 //   - error: Non-nil if file cannot be opened or read.
 func (h *Hasher) hashFile(path string) (string, error) {
-	f, err := os.Open(path)
+	safePath := pathutil.SanitizePath(path)
+	if safePath != path {
+		return "", fmt.Errorf("invalid path: %s", path)
+	}
+
+	data, err := pathutil.ReadFileSafely(safePath, 10<<20)
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
 
 	fileHasher := sha256.New()
-	if _, err := io.Copy(fileHasher, bufio.NewReaderSize(f, 32*1024)); err != nil {
-		return "", err
-	}
-
+	fileHasher.Write(data)
 	hash := hex.EncodeToString(fileHasher.Sum(nil))
 	return fmt.Sprintf("file:%s;hash:%s;", path, hash), nil
 }
