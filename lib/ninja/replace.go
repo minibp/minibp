@@ -90,13 +90,29 @@ func (r *replaceRule) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string 
 	}
 
 	// Generate build edges for each source file
-	outputs := r.Outputs(m, ctx)
+	// Use ${builddir}/.replaced/ for the replaced files
+	builddir := ctx.PathPrefix
+	if builddir == "" {
+		builddir = "."
+	}
+	outs := r.Outputs(m, ctx)
 	for i, src := range srcs {
-		if i >= len(outputs) {
+		if i >= len(outs) {
 			break
 		}
+		out := outs[i]
+		// The replaced file is the output
 		edges.WriteString(fmt.Sprintf("build %s: replace_file %s\n sed_args = %s\n",
-			outputs[i], filepath.Join(ctx.PathPrefix, src), strings.Join(sedArgs, " ")))
+			out, filepath.Join(ctx.PathPrefix, src), strings.Join(sedArgs, " ")))
+	}
+	for i, src := range srcs {
+		if i >= len(outs) {
+			break
+		}
+		out := outs[i]
+		// The replaced file is the output file
+		edges.WriteString(fmt.Sprintf("build %s: replace_file %s\n sed_args = %s\n",
+			out, filepath.Join(ctx.PathPrefix, src), strings.Join(sedArgs, " ")))
 	}
 
 	return edges.String()

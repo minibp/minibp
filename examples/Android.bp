@@ -231,3 +231,41 @@ custom {
     srcs: ["assets/config.json"],
     outs: ["out/config.json"],
 }
+
+// ===============================================================================
+// New features inspired by xmake.sh
+// ===============================================================================
+
+// Test undefines support
+cc_library {
+    name: "libtest_undef",
+    srcs: ["test_undef.c"],
+    cflags: ["-Wall"],
+    undefines: ["FOO", "BAR"],
+}
+
+// Test version management with soname
+cc_library {
+    name: "libtest_version",
+    srcs: ["test_version.c"],
+    shared: true,
+    version: "1.0.1",
+    version_soname: "1",
+}
+
+// Test config file generation
+config_gen {
+    name: "test_config",
+    configfiles: ["config.h.in"],
+    configdir: "out/include",
+    configvars: ["HAS_PTHREAD", "VERSION"],
+    configvar_HAS_PTHREAD: "1",
+    configvar_VERSION: "\"1.0.0\"",
+}
+
+// Test file replace rules
+replace_rule {
+    name: "test_replace",
+    srcs: ["test_replace.c"],
+    replace_rules: ["HELLO_REPLACE=hello", "VERSION_REPLACE=1.0.0"],
+}
