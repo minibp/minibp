@@ -1480,6 +1480,9 @@ func (r *ccBinary) ninjaEdgeForVariant(m *parser.Module, ctx RuleRenderContext, 
 	var libFiles []string
 	for _, dep := range deps {
 		depName := strings.TrimPrefix(dep, ":")
+		if isNonLinkableDep(depName, ctx.Modules) {
+			continue
+		}
 		libFiles = append(libFiles, staticLibOutputName(depName, ctx.ArchSuffix))
 	}
 	for _, dep := range sharedLibs {
@@ -1686,6 +1689,9 @@ func ccTestEdge(m *parser.Module, ctx RuleRenderContext) string {
 	var libFiles []string
 	for _, dep := range deps {
 		depName := strings.TrimPrefix(dep, ":")
+		if isNonLinkableDep(depName, ctx.Modules) {
+			continue
+		}
 		libFiles = append(libFiles, staticLibOutputName(depName, ctx.ArchSuffix))
 	}
 	for _, dep := range sharedLibs {

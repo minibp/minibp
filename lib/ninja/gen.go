@@ -373,6 +373,18 @@ func (g *Generator) collectIncludePaths(moduleName string, visited map[string]bo
 		}
 	}
 
+	// Check if this is a config_gen module — expose configdir as include path
+	if m.Type == "config_gen" {
+		configdir := GetStringProp(m, "configdir")
+		if configdir != "" {
+			dir := filepath.ToSlash(configdir)
+			if !seen[dir] {
+				includes = append(includes, dir)
+				seen[dir] = true
+			}
+		}
+	}
+
 	// Get direct export_include_dirs
 	dirs := getExportIncludeDirs(m)
 	for _, dir := range dirs {
@@ -801,6 +813,7 @@ func (g *Generator) Generate(w io.Writer) error {
 					}
 					edgeDef = g.addDataDepsToEdge(m, edgeDef, archCtx)
 					edgeDef = g.addIncludesToEdge(edgeDef, includes)
+					edgeDef = g.addConfigGenDepsToEdge(m, edgeDef, archCtx)
 					edgeDef += g.distEdgesForModule(m, archCtx)
 				}
 
@@ -1511,6 +1524,69 @@ func (g *Generator) addDataDepsToEdge(m *parser.Module, edge string, ctx RuleRen
 			}
 		}
 
+		buildLine := "build " + strings.Join(parsed.Outputs, " ") + ": " + ninjaEscapePath(parsed.Rule)
+		if len(parsed.Inputs) > 0 {
+			buildLine += " " + strings.Join(parsed.Inputs, " ")
+		}
+		if len(parsed.Deps) > 0 {
+			buildLine += " | " + strings.Join(parsed.Deps, " ")
+		}
+		lines[i] = buildLine
+	}
+	return strings.Join(lines, "\n")
+}
+
+// addConfigGenDepsToEdge adds config_gen output files as implicit dependencies
+// to cc compile edges. This ensures that when a generated header changes,
+// the source files that include it are recompiled.
+func (g *Generator) addConfigGenDepsToEdge(m *parser.Module, edge string, ctx RuleRenderContext) string {
+	deps := GetListProp(m, "deps")
+	var genOutputs []string
+	seen := make(map[string]bool)
+	for _, dep := range deps {
+		depName := strings.TrimPrefix(dep, ":")
+		depMod, ok := g.modules[depName]
+		if !ok || depMod == nil || depMod.Type != "config_gen" {
+			continue
+		}
+		rule, ok := g.rules[depMod.Type]
+		if !ok {
+			continue
+		}
+		for _, out := range rule.Outputs(depMod, ctx) {
+			if !seen[out] {
+				seen[out] = true
+				genOutputs = append(genOutputs, out)
+			}
+		}
+	}
+	if len(genOutputs) == 0 {
+		return edge
+	}
+
+	lines := strings.Split(edge, "\n")
+	for i, line := range lines {
+		parsed, ok := parseBuildLine(line)
+		if !ok {
+			continue
+		}
+		isCompile := strings.HasPrefix(parsed.Rule, "cc_compile") ||
+			strings.HasPrefix(parsed.Rule, "cpp_compile")
+		if !isCompile {
+			continue
+		}
+		for _, out := range genOutputs {
+			already := false
+			for _, existing := range parsed.Deps {
+				if ninjaUnescape(existing) == out {
+					already = true
+					break
+				}
+			}
+			if !already {
+				parsed.Deps = append(parsed.Deps, ninjaEscapePath(out))
+			}
+		}
 		buildLine := "build " + strings.Join(parsed.Outputs, " ") + ": " + ninjaEscapePath(parsed.Rule)
 		if len(parsed.Inputs) > 0 {
 			buildLine += " " + strings.Join(parsed.Inputs, " ")

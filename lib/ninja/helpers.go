@@ -1230,8 +1230,22 @@ func sharedLibOutputName(name string, archSuffix string) string {
 //	staticLibOutputName("foo", "_arm64")  // Returns "libfoo_arm64.a"
 //	staticLibOutputName("libbar", "")     // Returns "libbar.a"
 func staticLibOutputName(name string, archSuffix string) string {
-	// Delegate to libOutputName with ".a" extension for static libraries.
 	return libOutputName(name, archSuffix, ".a")
+}
+
+// isNonLinkableDep returns true if a dependency should NOT be added
+// as a link-time input. This applies to modules like config_gen and
+// cc_library_headers that provide build-time artifacts only.
+func isNonLinkableDep(depName string, modules map[string]*parser.Module) bool {
+	m, ok := modules[depName]
+	if !ok || m == nil {
+		return false
+	}
+	switch m.Type {
+	case "config_gen", "cc_library_headers":
+		return true
+	}
+	return false
 }
 
 // getFirstSource retrieves the first source file path from a module.

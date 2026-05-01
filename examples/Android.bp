@@ -283,10 +283,9 @@ cc_library {
     export_ldflags: ["-L/path/to/lib", "-Wl,--export-dynamic"],
 }
 
-// Binary that depends on libexport_test
-// Should inherit the exported flags in its compile and link commands
+// Binary that depends on config_gen — uses generated config.h
 cc_binary {
-    name: "test_export",
-    srcs: ["test_export.c"],
-    deps: [":libexport_test"],
+    name: "test_use_config",
+    srcs: ["test_use_config.c"],
+    deps: [":test_config"],
 }
