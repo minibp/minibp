@@ -275,32 +275,36 @@ func (r *ccLibrary) Name() string { return "cc_library" }
 func (r *ccLibrary) NinjaRule(ctx RuleRenderContext) string {
 	arCmd := ltoArchiveCmd(ctx.AR, ctx.Lto)
 	ltoCompile, ltoLink := ltoFlags(ctx.Lto)
-	rules := fmt.Sprintf(`rule cc_compile
+	return fmt.Sprintf(`rule cc_compile
 	command = %s -c $in -o $out $flags -MMD -MF $out.d
 	depfile = $out.d
 	deps = gcc
-	rule cc_compile_lto
+
+rule cc_compile_lto
 	command = %s -c $in -o $out $flags -MMD -MF $out.d
 	depfile = $out.d
 	deps = gcc
-	rule cc_archive
+
+rule cc_archive
 	command = %s rcs $out $in
 	restat = true
 
 rule cc_shared
- command = ${CC} -shared -o $out @$out.rsp $flags
- rspfile = $out.rsp
- rspfile_content = $in
+  command = ${CC} -shared -o $out @$out.rsp $flags
+  rspfile = $out.rsp
+  rspfile_content = $in
 
 rule cc_link_lto
  command = %s -o $out $in $flags %s
 
 rule thinlto_codegen
  command = %s -flto=thin -c -fthin-link=$out.thinlto.o $in -o $out %s
+
+rule ln
+  command = ln -sf $in $out
+  description = Creating symlink $out
 `, ccCompilerCmd(ctx, "cc"), ccCompilerCmd(ctx, "cc"),
 		arCmd, ctx.CC, ltoLink, ccCompilerCmd(ctx, "cc"), ltoCompile)
-
-	return rules
 }
 
 // Outputs returns the library output paths.
@@ -309,13 +313,16 @@ rule thinlto_codegen
 //
 //	This method returns the output file paths for the library. The output type
 //	depends on the "shared" property: static (.a) or shared (.so).
+//	If version property is set, shared libraries will have versioned output
+//	(e.g., libfoo.so.1.0.1) and optionally a soname symlink.
 //
 // How it works:
 //  1. Get module name from "name" property
 //  2. If name is empty, return nil
 //  3. Add "lib" prefix if not present
 //  4. Check "shared" property to determine output type
-//  5. Append ArchSuffix for multi-architecture builds
+//  5. If shared and version is set, use versioned output
+//  6. Append ArchSuffix for multi-architecture builds
 //
 // Parameters:
 //   - m: parser.Module being evaluated (must have "name" property, optionally "shared")
@@ -326,11 +333,13 @@ rule thinlto_codegen
 //   - nil if module has no name
 //
 // Edge cases:
-//   - Empty name: Returns nil
+//   - Empty name: Returns nil (cannot determine output path)
 //   - "foo" becomes "libfoo"
 //   - "libbar" stays "libbar"
-//   - shared=true: Returns .so extension
+//   - shared=true: Returns .so extension (possibly versioned)
 //   - shared=false or missing: Returns .a extension
+//   - version property: Creates versioned shared library (e.g., libfoo.so.1.0.1)
+//   - version_soname property: Creates soname symlink (e.g., libfoo.so.1)
 func (r *ccLibrary) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 	name := getName(m)
 	if name == "" {
@@ -342,6 +351,11 @@ func (r *ccLibrary) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 		libName = "lib" + name
 	}
 	if getBoolProp(m, "shared") {
+		// Check for version property (version management)
+		version := GetStringProp(m, "version")
+		if version != "" {
+			return []string{fmt.Sprintf("%s%s.so.%s", libName, suffix, version)}
+		}
 		return []string{fmt.Sprintf("%s%s.so", libName, suffix)}
 	}
 	return []string{fmt.Sprintf("%s%s.a", libName, suffix)}
@@ -496,7 +510,7 @@ func (r *ccLibrary) ninjaEdgeForVariant(m *parser.Module, ctx RuleRenderContext,
 	}
 
 	// Build flags
-	cflags := joinFlags(ctx.CFlags, getCflags(m), getCppflags(m))
+	cflags := joinFlags(ctx.CFlags, getCflags(m), getCppflags(m), getUndefines(m))
 	if variant != "" {
 		if v := getGoTargetProp(m, variant, "cflags"); v != "" {
 			cflags = joinFlags(cflags, v)
@@ -542,11 +556,38 @@ func (r *ccLibrary) ninjaEdgeForVariant(m *parser.Module, ctx RuleRenderContext,
 
 	// Generate the final library output edge (archive or link).
 	out := r.Outputs(m, ctx)[0]
+	version := GetStringProp(m, "version")
 
 	if shared {
 		// Shared library: link all object files and shared library dependencies.
 		allInputs := append(objFiles, sharedInputs...)
 		edges.WriteString(fmt.Sprintf("build %s: %s %s\n flags = %s\n CC = %s\n", out, sharedRule, strings.Join(allInputs, " "), ldflags, linker))
+
+		// Create symlinks for versioned shared libraries (similar to xmake.sh's soname mechanism).
+		// xmake.sh creates: libfoo.so.1.0.1 (versioned), libfoo.so.1 (soname), libfoo.so -> soname
+		if version != "" {
+			// Get soname version (defaults to major version if not specified).
+			versionSoname := GetStringProp(m, "version_soname")
+			if versionSoname == "" {
+				// Default: use major version (first component of version).
+				parts := strings.Split(version, ".")
+				if len(parts) > 0 {
+					versionSoname = parts[0]
+				}
+			}
+
+			// Get the base output name (without version suffix).
+			// From Outputs(): returns fmt.Sprintf("%s%s.so.%s", libName, suffix, version)
+			// We need to construct the soname and default symlinks.
+			libName := out[:len(out)-len(version)-4] // Remove ".so.version"
+			sonameFile := fmt.Sprintf("%s.so.%s", libName, versionSoname)
+			defaultFile := fmt.Sprintf("%s.so", libName)
+
+			// Create symlink: soname -> versioned file.
+			edges.WriteString(fmt.Sprintf("build %s: ln %s\n", sonameFile, out))
+			// Create symlink: default -> soname.
+			edges.WriteString(fmt.Sprintf("build %s: ln %s\n", defaultFile, sonameFile))
+		}
 	} else {
 		// Static library: archive object files into .a file.
 		edges.WriteString(fmt.Sprintf("build %s: %s %s\n", out, archiveRule, strings.Join(objFiles, " ")))
@@ -717,7 +758,7 @@ func (r *ccLibraryStatic) NinjaEdge(m *parser.Module, ctx RuleRenderContext) str
 	}
 
 	// Build C flags: combine context flags, module cflags (no cppflags for static library).
-	cflags := joinFlags(ctx.CFlags, getCflags(m))
+	cflags := joinFlags(ctx.CFlags, getCflags(m), getUndefines(m))
 	if ltoCompileExtra != "" {
 		cflags = strings.TrimSpace(cflags + " " + ltoCompileExtra)
 	}
@@ -908,7 +949,7 @@ func (r *ccLibraryShared) NinjaEdge(m *parser.Module, ctx RuleRenderContext) str
 		compileRule = "cc_compile_lto"
 	}
 
-	cflags := joinFlags(ctx.CFlags, getCflags(m), getCppflags(m))
+	cflags := joinFlags(ctx.CFlags, getCflags(m), getCppflags(m), getUndefines(m))
 	if ltoCompileExtra != "" {
 		cflags = strings.TrimSpace(cflags + " " + ltoCompileExtra)
 	}
@@ -1098,7 +1139,7 @@ func (r *ccObject) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 	}
 
 	// Build C flags: combine context flags and module cflags (no cppflags for object type).
-	cflags := joinFlags(ctx.CFlags, getCflags(m))
+	cflags := joinFlags(ctx.CFlags, getCflags(m), getUndefines(m))
 	if ltoCompileExtra != "" {
 		cflags = strings.TrimSpace(cflags + " " + ltoCompileExtra)
 	}
@@ -1581,7 +1622,7 @@ func ccTestEdge(m *parser.Module, ctx RuleRenderContext) string {
 	if name == "" || len(srcs) == 0 {
 		return ""
 	}
-	cflags := joinFlags(getCflags(m), ctx.CFlags)
+	cflags := joinFlags(getCflags(m), getUndefines(m), ctx.CFlags)
 	linkFlags := joinFlags(getLdflags(m), ctx.LdFlags)
 	moduleLto := getLto(m)
 	if moduleLto == "" {

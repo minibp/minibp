@@ -669,16 +669,22 @@ func (g *Generator) Generate(w io.Writer) error {
 				if arch != "" && arch != g.arch && len(archs) > 1 {
 					phonyName = moduleName + "_" + arch
 				}
-				if !seenPhony[phonyName] {
-					seenPhony[phonyName] = true
-					escapedOutputs := make([]string, 0, len(outputs))
-					for _, out := range outputs {
-						escapedOutputs = append(escapedOutputs, g.adjustBuildPath(out, true))
-					}
-					phonyEntries = append(phonyEntries, phonyInfo{phonyName: phonyName, outputs: escapedOutputs})
-				}
+			// Skip config_gen type - it has proper outputs and build edges
+			// Adding it to phonyEntries would override the actual build rule
+			if m.Type == "config_gen" {
+				continue
+			}
 
-				if moduleName != "all" && moduleName != "clean" && m.Type != "cc_library_headers" {
+			if !seenPhony[phonyName] {
+				seenPhony[phonyName] = true
+				escapedOutputs := make([]string, 0, len(outputs))
+				for _, out := range outputs {
+					escapedOutputs = append(escapedOutputs, g.adjustBuildPath(out, true))
+				}
+				phonyEntries = append(phonyEntries, phonyInfo{phonyName: phonyName, outputs: escapedOutputs})
+			}
+
+				if moduleName != "all" && moduleName != "clean" && m.Type != "cc_library_headers" && m.Type != "config_gen" {
 					if !seenAllTargets[phonyName] {
 						seenAllTargets[phonyName] = true
 						allPhonyTargets = append(allPhonyTargets, phonyName)

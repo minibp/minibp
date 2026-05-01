@@ -447,6 +447,35 @@ func getLdflags(m *parser.Module) string {
 	return strings.Join(GetListProp(m, "ldflags"), " ")
 }
 
+// getUndefines retrieves undefined macros from a module's "undefines" property.
+//
+// This function extracts the "undefines" property (a list of strings)
+// and adds "-U" prefix to each macro name to create compiler flags
+// that will undefine those macros during compilation.
+//
+// Parameters:
+//   - m: The parser.Module to extract undefines from.
+//
+// Returns:
+//   - A space-separated string of -U flags (e.g., "-UFOO -UBAR").
+//   - Empty string ("") if the "undefines" property is missing, wrong type, or empty.
+//
+// Example:
+//
+//	// In Blueprint: cc_library { undefines: ["FOO", "BAR"] }
+//	flags := getUndefines(m)  // Returns "-UFOO -UBAR"
+func getUndefines(m *parser.Module) string {
+	undefines := GetListProp(m, "undefines")
+	if len(undefines) == 0 {
+		return ""
+	}
+	// Add -U prefix to each macro
+	for i, macro := range undefines {
+		undefines[i] = "-U" + macro
+	}
+	return strings.Join(undefines, " ")
+}
+
 // getGoflags retrieves Go compiler flags from a module's "goflags" property.
 //
 // This is a convenience function that extracts the "goflags" property (a list

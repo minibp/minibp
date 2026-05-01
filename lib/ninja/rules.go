@@ -215,8 +215,12 @@ func GetAllRules() []BuildRule {
 		&customRule{},
 		&protoLibraryRule{},
 		&protoGenRule{},
+		&configGen{},
 
-		// Shell/Python rules
+		// File replace rules
+	&replaceRule{},
+
+	// Shell/Python rules
 		&shBinaryHostRule{},
 		&pythonBinaryHostRule{},
 		&pythonTestHostRule{},
