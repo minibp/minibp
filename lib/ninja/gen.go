@@ -433,6 +433,176 @@ func (g *Generator) collectIncludePaths(moduleName string, visited map[string]bo
 	return includes
 }
 
+// collectExportCflags recursively collects export_cflags from a module and its dependencies.
+// These flags are added to the compiler flags (CFlags) of modules that depend on this module.
+//
+// Parameters:
+//   - moduleName: Name of the module to collect flags for
+//   - visited: Map to track visited modules (prevent cycles)
+//
+// Returns:
+//   - Slice of exported C flags (de-duplicated)
+//
+// Algorithm:
+//  1. Check if already visited (return nil to prevent infinite loop)
+//  2. Mark current module as visited
+//  3. Add module's own export_cflags
+//  4. Recursively collect from header_libs, shared_libs, and deps
+//
+// Edge cases:
+//   - Module doesn't exist: returns empty slice
+//   - Circular dependencies: prevented by visited map
+//   - Duplicate flags: deduplicated via seen map
+func (g *Generator) collectExportCflags(moduleName string, visited map[string]bool) []string {
+	if visited[moduleName] {
+		return nil
+	}
+	visited[moduleName] = true
+
+	m, ok := g.modules[moduleName]
+	if !ok || m == nil {
+		return []string{}
+	}
+
+	var flags []string
+	seen := make(map[string]bool)
+
+	// Get direct export_cflags
+	cfgs := getExportCflags(m)
+	for _, flag := range cfgs {
+		if !seen[flag] {
+			flags = append(flags, flag)
+			seen[flag] = true
+		}
+	}
+
+	// Collect from header_libs
+	headerLibs := GetListProp(m, "header_libs")
+	for _, dep := range headerLibs {
+		depName := strings.TrimPrefix(dep, ":")
+		depFlags := g.collectExportCflags(depName, visited)
+		for _, flag := range depFlags {
+			if !seen[flag] {
+				flags = append(flags, flag)
+				seen[flag] = true
+			}
+		}
+	}
+
+	// Collect from shared_libs
+	sharedLibs := GetListProp(m, "shared_libs")
+	for _, dep := range sharedLibs {
+		depName := strings.TrimPrefix(dep, ":")
+		depFlags := g.collectExportCflags(depName, visited)
+		for _, flag := range depFlags {
+			if !seen[flag] {
+				flags = append(flags, flag)
+				seen[flag] = true
+			}
+		}
+	}
+
+	// Collect from deps
+	deps := GetListProp(m, "deps")
+	for _, dep := range deps {
+		depName := strings.TrimPrefix(dep, ":")
+		depFlags := g.collectExportCflags(depName, visited)
+		for _, flag := range depFlags {
+			if !seen[flag] {
+				flags = append(flags, flag)
+				seen[flag] = true
+			}
+		}
+	}
+
+	return flags
+}
+
+// collectExportLdflags recursively collects export_ldflags from a module and its dependencies.
+// These flags are added to the linker flags (LdFlags) of modules that depend on this module.
+//
+// Parameters:
+//   - moduleName: Name of the module to collect flags for
+//   - visited: Map to track visited modules (prevent cycles)
+//
+// Returns:
+//   - Slice of exported linker flags (de-duplicated)
+//
+// Algorithm:
+//  1. Check if already visited (return nil to prevent infinite loop)
+//  2. Mark current module as visited
+//  3. Add module's own export_ldflags
+//  4. Recursively collect from header_libs, shared_libs, and deps
+//
+// Edge cases:
+//   - Module doesn't exist: returns empty slice
+//   - Circular dependencies: prevented by visited map
+//   - Duplicate flags: deduplicated via seen map
+func (g *Generator) collectExportLdflags(moduleName string, visited map[string]bool) []string {
+	if visited[moduleName] {
+		return nil
+	}
+	visited[moduleName] = true
+
+	m, ok := g.modules[moduleName]
+	if !ok || m == nil {
+		return []string{}
+	}
+
+	var flags []string
+	seen := make(map[string]bool)
+
+	// Get direct export_ldflags
+	ldflags := getExportLdflags(m)
+	for _, flag := range ldflags {
+		if !seen[flag] {
+			flags = append(flags, flag)
+			seen[flag] = true
+		}
+	}
+
+	// Collect from header_libs
+	headerLibs := GetListProp(m, "header_libs")
+	for _, dep := range headerLibs {
+		depName := strings.TrimPrefix(dep, ":")
+		depFlags := g.collectExportLdflags(depName, visited)
+		for _, flag := range depFlags {
+			if !seen[flag] {
+				flags = append(flags, flag)
+				seen[flag] = true
+			}
+		}
+	}
+
+	// Collect from shared_libs
+	sharedLibs := GetListProp(m, "shared_libs")
+	for _, dep := range sharedLibs {
+		depName := strings.TrimPrefix(dep, ":")
+		depFlags := g.collectExportLdflags(depName, visited)
+		for _, flag := range depFlags {
+			if !seen[flag] {
+				flags = append(flags, flag)
+				seen[flag] = true
+			}
+		}
+	}
+
+	// Collect from deps
+	deps := GetListProp(m, "deps")
+	for _, dep := range deps {
+		depName := strings.TrimPrefix(dep, ":")
+		depFlags := g.collectExportLdflags(depName, visited)
+		for _, flag := range depFlags {
+			if !seen[flag] {
+				flags = append(flags, flag)
+				seen[flag] = true
+			}
+		}
+	}
+
+	return flags
+}
+
 // Generate writes the ninja build file content to the provided writer.
 //
 // It implements the main ninja generation pipeline:
@@ -612,6 +782,19 @@ func (g *Generator) Generate(w io.Writer) error {
 					archCtx = g.ruleRenderContextForArch(arch)
 				}
 
+				// Collect export_cflags and export_ldflags from dependencies
+				// Use separate visited maps to allow collecting both from same dependencies
+				exportVisited1 := make(map[string]bool)
+				exportCFlags := g.collectExportCflags(moduleName, exportVisited1)
+				exportVisited2 := make(map[string]bool)
+				exportLdFlags := g.collectExportLdflags(moduleName, exportVisited2)
+				if len(exportCFlags) > 0 {
+					archCtx.ExportCFlags = strings.Join(exportCFlags, " ")
+				}
+				if len(exportLdFlags) > 0 {
+					archCtx.ExportLdFlags = strings.Join(exportLdFlags, " ")
+				}
+
 				edgeDef := rule.NinjaEdge(m, archCtx)
 
 				if edgeDef == "" && m.Type != "cc_library_headers" {
@@ -669,20 +852,20 @@ func (g *Generator) Generate(w io.Writer) error {
 				if arch != "" && arch != g.arch && len(archs) > 1 {
 					phonyName = moduleName + "_" + arch
 				}
-			// Skip config_gen type - it has proper outputs and build edges
-			// Adding it to phonyEntries would override the actual build rule
-			if m.Type == "config_gen" {
-				continue
-			}
-
-			if !seenPhony[phonyName] {
-				seenPhony[phonyName] = true
-				escapedOutputs := make([]string, 0, len(outputs))
-				for _, out := range outputs {
-					escapedOutputs = append(escapedOutputs, g.adjustBuildPath(out, true))
+				// Skip config_gen type - it has proper outputs and build edges
+				// Adding it to phonyEntries would override the actual build rule
+				if m.Type == "config_gen" {
+					continue
 				}
-				phonyEntries = append(phonyEntries, phonyInfo{phonyName: phonyName, outputs: escapedOutputs})
-			}
+
+				if !seenPhony[phonyName] {
+					seenPhony[phonyName] = true
+					escapedOutputs := make([]string, 0, len(outputs))
+					for _, out := range outputs {
+						escapedOutputs = append(escapedOutputs, g.adjustBuildPath(out, true))
+					}
+					phonyEntries = append(phonyEntries, phonyInfo{phonyName: phonyName, outputs: escapedOutputs})
+				}
 
 				if moduleName != "all" && moduleName != "clean" && m.Type != "cc_library_headers" && m.Type != "config_gen" {
 					if !seenAllTargets[phonyName] {

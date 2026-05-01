@@ -269,3 +269,24 @@ replace_rule {
     srcs: ["test_replace.c"],
     replace_rules: ["HELLO_REPLACE=hello", "VERSION_REPLACE=1.0.0"],
 }
+
+// ============================================================================
+// Test export_cflags and export_ldflags
+// ============================================================================
+
+// Library with exported flags
+cc_library {
+    name: "libexport_test",
+    srcs: ["helper.c"],
+    cflags: ["-Wall"],
+    export_cflags: ["-DEXPORTED_DEFINE", "-DHELLO=\"exported\""],
+    export_ldflags: ["-L/path/to/lib", "-Wl,--export-dynamic"],
+}
+
+// Binary that depends on libexport_test
+// Should inherit the exported flags in its compile and link commands
+cc_binary {
+    name: "test_export",
+    srcs: ["main.c"],
+    deps: [":libexport_test"],
+}

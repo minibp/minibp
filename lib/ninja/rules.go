@@ -113,6 +113,8 @@ type RuleRenderContext struct {
 	Modules        map[string]*parser.Module
 	GoModulePath   string
 	GoImportPrefix string
+	ExportCFlags   string // Exported C flags from dependencies
+	ExportLdFlags  string // Exported linker flags from dependencies
 }
 
 // DefaultRuleRenderContext returns a RuleRenderContext with default toolchain values.
@@ -218,9 +220,9 @@ func GetAllRules() []BuildRule {
 		&configGen{},
 
 		// File replace rules
-	&replaceRule{},
+		&replaceRule{},
 
-	// Shell/Python rules
+		// Shell/Python rules
 		&shBinaryHostRule{},
 		&pythonBinaryHostRule{},
 		&pythonTestHostRule{},

@@ -523,12 +523,20 @@ func (r *ccLibrary) ninjaEdgeForVariant(m *parser.Module, ctx RuleRenderContext,
 	if sysroot != "" {
 		cflags = strings.TrimSpace(cflags + " --sysroot=" + sysroot)
 	}
+	// Add exported cflags from dependencies
+	if ctx.ExportCFlags != "" {
+		cflags = strings.TrimSpace(cflags + " " + ctx.ExportCFlags)
+	}
 
 	ldflags := joinFlags(ctx.LdFlags, getLdflags(m))
 	if variant != "" {
 		if v := getGoTargetProp(m, variant, "ldflags"); v != "" {
 			ldflags = joinFlags(ldflags, v)
 		}
+	}
+	// Add exported ldflags from dependencies
+	if ctx.ExportLdFlags != "" {
+		ldflags = strings.TrimSpace(ldflags + " " + ctx.ExportLdFlags)
 	}
 
 	var sharedInputs []string
@@ -762,6 +770,10 @@ func (r *ccLibraryStatic) NinjaEdge(m *parser.Module, ctx RuleRenderContext) str
 	if ltoCompileExtra != "" {
 		cflags = strings.TrimSpace(cflags + " " + ltoCompileExtra)
 	}
+	// Add exported cflags from dependencies
+	if ctx.ExportCFlags != "" {
+		cflags = strings.TrimSpace(cflags + " " + ctx.ExportCFlags)
+	}
 
 	// Generate compile edges for each source file.
 	var edges strings.Builder
@@ -953,7 +965,15 @@ func (r *ccLibraryShared) NinjaEdge(m *parser.Module, ctx RuleRenderContext) str
 	if ltoCompileExtra != "" {
 		cflags = strings.TrimSpace(cflags + " " + ltoCompileExtra)
 	}
+	// Add exported cflags from dependencies
+	if ctx.ExportCFlags != "" {
+		cflags = strings.TrimSpace(cflags + " " + ctx.ExportCFlags)
+	}
 	ldflags := joinFlags(ctx.LdFlags, getLdflags(m))
+	// Add exported ldflags from dependencies
+	if ctx.ExportLdFlags != "" {
+		ldflags = strings.TrimSpace(ldflags + " " + ctx.ExportLdFlags)
+	}
 
 	var sharedInputs []string
 	sharedLibs := GetListProp(m, "shared_libs")
@@ -1441,12 +1461,20 @@ func (r *ccBinary) ninjaEdgeForVariant(m *parser.Module, ctx RuleRenderContext, 
 	if sysroot != "" {
 		cflags = strings.TrimSpace(cflags + " --sysroot=" + sysroot)
 	}
+	// Add exported cflags from dependencies
+	if ctx.ExportCFlags != "" {
+		cflags = strings.TrimSpace(cflags + " " + ctx.ExportCFlags)
+	}
 
 	ldflags := joinFlags(ctx.LdFlags, getLdflags(m))
 	if variant != "" {
 		if v := getGoTargetProp(m, variant, "ldflags"); v != "" {
 			ldflags = joinFlags(ldflags, v)
 		}
+	}
+	// Add exported ldflags from dependencies
+	if ctx.ExportLdFlags != "" {
+		ldflags = strings.TrimSpace(ldflags + " " + ctx.ExportLdFlags)
 	}
 
 	var libFiles []string

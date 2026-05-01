@@ -22,7 +22,6 @@
 //	    srcs: ["test.cpp"],
 //	    replace_rules: ["HELLO_REPLACE=hello", "VERSION_REPLACE=1.0.0"],
 //	}
-//
 package ninja
 
 import (

@@ -842,6 +842,36 @@ func getExportIncludeDirs(m *parser.Module) []string {
 	return GetListProp(m, "export_include_dirs")
 }
 
+// getExportCflags retrieves exported C flags from a module.
+//
+// Exported C flags are added to the compilation flags of modules that depend on this module.
+// This allows a library to specify compiler flags that its consumers need (e.g., -D macros).
+//
+// Parameters:
+//   - m: The parser.Module to extract exported C flags from.
+//
+// Returns:
+//   - A slice of exported C flags from "export_cflags" property.
+//   - nil (not an empty slice) if property not found or module is nil.
+func getExportCflags(m *parser.Module) []string {
+	return GetListProp(m, "export_cflags")
+}
+
+// getExportLdflags retrieves exported linker flags from a module.
+//
+// Exported linker flags are added to the linker flags of modules that depend on this module.
+// This allows a library to specify linker flags that its consumers need (e.g., -L, -l flags).
+//
+// Parameters:
+//   - m: The parser.Module to extract exported linker flags from.
+//
+// Returns:
+//   - A slice of exported linker flags from "export_ldflags" property.
+//   - nil (not an empty slice) if property not found or module is nil.
+func getExportLdflags(m *parser.Module) []string {
+	return GetListProp(m, "export_ldflags")
+}
+
 // getExportedHeaders retrieves exported header file paths from a module.
 //
 // Exported header files are made available to modules that depend on this module.
