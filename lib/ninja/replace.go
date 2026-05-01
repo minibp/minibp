@@ -56,11 +56,15 @@ func (r *replaceRule) Outputs(m *parser.Module, ctx RuleRenderContext) []string 
 	}
 	// For each source file, generate a replaced version
 	// The replaced file is stored in ${builddir}/.replaced/${filename}
+	prefix := ctx.PathPrefix
+	if prefix == "" {
+		prefix = "."
+	}
 	var outputs []string
 	for _, src := range srcs {
 		// Get the filename from the path
 		// The replaced file will be in ${builddir}/.replaced/
-		output := fmt.Sprintf("%s/.replaced/%s", ctx.PathPrefix, src)
+		output := fmt.Sprintf("%s/.replaced/%s", prefix, src)
 		outputs = append(outputs, output)
 	}
 	return outputs
@@ -91,26 +95,12 @@ func (r *replaceRule) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string 
 
 	// Generate build edges for each source file
 	// Use ${builddir}/.replaced/ for the replaced files
-	builddir := ctx.PathPrefix
-	if builddir == "" {
-		builddir = "."
-	}
 	outs := r.Outputs(m, ctx)
 	for i, src := range srcs {
 		if i >= len(outs) {
 			break
 		}
 		out := outs[i]
-		// The replaced file is the output
-		edges.WriteString(fmt.Sprintf("build %s: replace_file %s\n sed_args = %s\n",
-			out, filepath.Join(ctx.PathPrefix, src), strings.Join(sedArgs, " ")))
-	}
-	for i, src := range srcs {
-		if i >= len(outs) {
-			break
-		}
-		out := outs[i]
-		// The replaced file is the output file
 		edges.WriteString(fmt.Sprintf("build %s: replace_file %s\n sed_args = %s\n",
 			out, filepath.Join(ctx.PathPrefix, src), strings.Join(sedArgs, " ")))
 	}
