@@ -849,6 +849,12 @@ func (g *Generator) Generate(w io.Writer) error {
 				// Skip config_gen type - it has proper outputs and build edges
 				// Adding it to phonyEntries would override the actual build rule
 				if m.Type == "config_gen" {
+					if moduleName != "all" && moduleName != "clean" {
+						if !seenAllTargets[phonyName] {
+							seenAllTargets[phonyName] = true
+							allPhonyTargets = append(allPhonyTargets, phonyName)
+						}
+					}
 					continue
 				}
 
@@ -861,7 +867,7 @@ func (g *Generator) Generate(w io.Writer) error {
 					phonyEntries = append(phonyEntries, phonyInfo{phonyName: phonyName, outputs: escapedOutputs})
 				}
 
-				if moduleName != "all" && moduleName != "clean" && m.Type != "cc_library_headers" && m.Type != "config_gen" {
+				if moduleName != "all" && moduleName != "clean" && m.Type != "cc_library_headers" {
 					if !seenAllTargets[phonyName] {
 						seenAllTargets[phonyName] = true
 						allPhonyTargets = append(allPhonyTargets, phonyName)
