@@ -51,6 +51,7 @@ import (
 	"minibp/lib/ninja"
 	"minibp/lib/parser"
 	"minibp/lib/props"
+	"minibp/lib/toolchain"
 	"minibp/lib/variant"
 )
 
@@ -771,6 +772,26 @@ func buildRegenCmd(opts Options) string {
 func toolchainFromOptions(opts Options) ninja.Toolchain {
 	// Start with default toolchain settings for the target platform.
 	tc := ninja.DefaultToolchain()
+
+	// Auto-detect cross-compilation toolchain based on target architecture and OS.
+	// This uses the toolchain package to find arch-specific compilers (e.g., aarch64-linux-gnu-gcc).
+	if opts.Arch != "" {
+		if arch, err := toolchain.ParseArchitecture(opts.Arch); err == nil {
+			osStr := opts.TargetOS
+			if osStr == "" {
+				osStr = "linux" // default OS for cross-compilation
+			}
+			if os, err := toolchain.ParseOS(osStr); err == nil {
+				config := toolchain.NewToolchainConfig()
+				if detected, err := config.DetectToolchain(arch, os); err == nil {
+					tc.CC = detected.CC
+					tc.CXX = detected.CXX
+					tc.AR = detected.AR
+				}
+			}
+		}
+	}
+
 	if opts.CC != "" {
 		tc.CC = opts.CC
 	}
