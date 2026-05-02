@@ -47,6 +47,8 @@ A minimal Android.bp (Blueprint) parser and Ninja build file generator written i
 
 - **exec_script() extension** (minibp-specific, not standard Soong): Run external scripts during Blueprint parsing/evaluation phase. Captures stdout as expression value, with automatic JSON parsing for structured output.
 
+- **config_gen support**: Generate header files from templates with automatic include path injection. CC modules depending on config_gen automatically get `-I configdir` and implicit header dependencies.
+
 - **Incremental builds**: SHA256-based file hash caching with AST JSON serialization in `.minibp/` directory
 
 ## Usage
@@ -165,6 +167,25 @@ soong_namespace {
 }
 
 # //vendor:lib resolves via namespace
+
+# config_gen — generate header files from templates
+config_gen {
+    name: "my_config",
+    srcs: ["config.h.in"],
+    exports_include_dirs: ["out/include"],
+    vars: {
+        VERSION: "\"1.0.0\"",
+        HAS_PTHREAD: "1",
+    },
+}
+
+cc_binary {
+    name: "app",
+    srcs: ["main.c"],
+    deps: [":my_config"],  # Automatically gets -Iout/include and implicit header deps
+}
+
+> **Note**: `config_gen` is a minibp-specific extension, not part of standard Soong/Blueprint. Generated headers use `${VAR}` and `${define VAR}` syntax.
 
 # exec_script() — minibp extension, runs at parse time
 value = exec_script("detect_arch.sh")
