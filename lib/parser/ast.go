@@ -24,6 +24,26 @@
 //   - Position information is kept for error messages
 //   - Select has dedicated condition and case structures for conditional evaluation
 //   - The AST is mutable - nodes may be modified during evaluation
+//
+// Examples:
+// A simple Blueprint module parses to the following AST structure:
+//
+//	cc_binary {
+//	    name: "my_app",
+//	    srcs: ["main.c"],
+//	}
+//
+// Corresponds to:
+//
+//	&Module{
+//	    Type: "cc_binary",
+//	    Map: &Map{
+//	        Properties: []*Property{
+//	            {Name: "name", Value: &String{Value: "my_app"}},
+//	            {Name: "srcs", Value: &List{Values: []Expression{&String{Value: "main.c"}}}},
+//	        },
+//	    },
+//	}
 package parser
 
 import (
@@ -74,10 +94,26 @@ type Module struct {
 
 // Pos returns the source position of the module type.
 // Used for error reporting and source navigation.
+//
+// Parameters: None
+//
+// Returns: scanner.Position - source position of the module's type name
+//
+// Edge cases: None (TypePos is always set during parsing)
+//
+// Notes: Implements the Expression interface's Pos() method
 func (m *Module) Pos() scanner.Position { return m.TypePos }
 
 // String returns a string representation of the module (type + properties).
 // Format: "type { prop1: value1, prop2: value2, ... }"
+//
+// Parameters: None
+//
+// Returns: string - formatted module string with type and properties
+//
+// Edge cases: Assumes Map is non-nil (parser ensures initialization during parsing)
+//
+// Notes: Implements the Expression interface's String() method
 func (m *Module) String() string {
 	return m.Type + " " + m.Map.String()
 }
@@ -95,14 +131,30 @@ type Map struct {
 
 // Pos returns the position of the opening brace.
 // Used for error reporting.
+//
+// Parameters: None
+//
+// Returns: scanner.Position - source position of the opening { brace
+//
+// Edge cases: None
+//
+// Notes: Implements the Expression interface's Pos() method
 func (m *Map) Pos() scanner.Position { return m.LBracePos }
 
 // GetPropMap returns a map of property names to Property pointers for O(1) lookup.
 // The map is lazily initialized and cached. Subsequent calls return the cached map.
+//
+// Parameters: None
+//
+// Returns: map[string]*Property - cached mapping of property names to their Property nodes
+//
+// Edge cases: Not thread-safe; assumes single-threaded access (parser runs sequentially)
+//
+// Notes: Lazily initialized on first call, subsequent calls return the cached map
 func (m *Map) GetPropMap() map[string]*Property {
-	if m.propMap == nil {
-		m.propMap = make(map[string]*Property, len(m.Properties))
-		for _, prop := range m.Properties {
+	if m.propMap == nil { // first access, initialize cache
+		m.propMap = make(map[string]*Property, len(m.Properties)) // preallocate with exact capacity
+		for _, prop := range m.Properties {                       // map property name to its Property node
 			m.propMap[prop.Name] = prop
 		}
 	}
@@ -111,10 +163,18 @@ func (m *Map) GetPropMap() map[string]*Property {
 
 // String returns a string representation of the map.
 // Format: "{ prop1: value1, prop2: value2, ... }"
+//
+// Parameters: None
+//
+// Returns: string - formatted map with properties separated by commas
+//
+// Edge cases: Returns "{}" for maps with no properties
+//
+// Notes: Implements the Expression interface's String() method
 func (m *Map) String() string {
 	result := "{"
 	for i, p := range m.Properties {
-		if i > 0 {
+		if i > 0 { // not first property, add comma separator
 			result += ", "
 		}
 		result += p.String()
@@ -136,6 +196,14 @@ type Property struct {
 
 // String returns a string representation.
 // Format: "name: value"
+//
+// Parameters: None
+//
+// Returns: string - formatted property as "name: value"
+//
+// Edge cases: None
+//
+// Notes: None
 func (p *Property) String() string {
 	return p.Name + ": " + p.Value.String()
 }
@@ -149,9 +217,25 @@ type String struct {
 }
 
 // Pos returns the position of the string literal.
+//
+// Parameters: None
+//
+// Returns: scanner.Position - source position of the string literal
+//
+// Edge cases: None
+//
+// Notes: Implements the Expression interface's Pos() method
 func (s *String) Pos() scanner.Position { return s.LiteralPos }
 
 // String returns the string value.
+//
+// Parameters: None
+//
+// Returns: string - unquoted string content
+//
+// Edge cases: None
+//
+// Notes: Implements the Expression interface's String() method
 func (s *String) String() string { return s.Value }
 
 // Int64 represents an integer literal like 42 or -10.
@@ -164,9 +248,25 @@ type Int64 struct {
 }
 
 // Pos returns the position of the integer literal.
+//
+// Parameters: None
+//
+// Returns: scanner.Position - source position of the integer literal
+//
+// Edge cases: None
+//
+// Notes: Implements the Expression interface's Pos() method
 func (i *Int64) Pos() scanner.Position { return i.LiteralPos }
 
 // String returns the string representation of the integer.
+//
+// Parameters: None
+//
+// Returns: string - integer formatted as base-10 string
+//
+// Edge cases: None
+//
+// Notes: Implements the Expression interface's String() method
 func (i *Int64) String() string { return strconv.FormatInt(i.Value, 10) }
 
 // Bool represents a boolean literal: true or false.
@@ -177,11 +277,27 @@ type Bool struct {
 }
 
 // Pos returns the position of the boolean literal.
+//
+// Parameters: None
+//
+// Returns: scanner.Position - source position of the boolean literal
+//
+// Edge cases: None
+//
+// Notes: Implements the Expression interface's Pos() method
 func (b *Bool) Pos() scanner.Position { return b.LiteralPos }
 
 // String returns "true" or "false".
+//
+// Parameters: None
+//
+// Returns: string - "true" if Value is true, "false" otherwise
+//
+// Edge cases: None
+//
+// Notes: Implements the Expression interface's String() method
 func (b *Bool) String() string {
-	if b.Value {
+	if b.Value { // boolean is true, return "true"
 		return "true"
 	}
 	return "false"
@@ -198,14 +314,30 @@ type List struct {
 }
 
 // Pos returns the position of the opening bracket.
+//
+// Parameters: None
+//
+// Returns: scanner.Position - source position of the opening [ bracket
+//
+// Edge cases: None
+//
+// Notes: Implements the Expression interface's Pos() method
 func (l *List) Pos() scanner.Position { return l.LBracePos }
 
 // String returns a string representation.
 // Format: "[ value1, value2, ... ]"
+//
+// Parameters: None
+//
+// Returns: string - formatted list with elements separated by commas
+//
+// Edge cases: Returns "[]" for empty lists
+//
+// Notes: Implements the Expression interface's String() method
 func (l *List) String() string {
 	result := "["
 	for i, v := range l.Values {
-		if i > 0 {
+		if i > 0 { // not first element, add comma separator
 			result += ", "
 		}
 		result += v.String()
@@ -224,9 +356,25 @@ type Variable struct {
 }
 
 // Pos returns the position of the variable name.
+//
+// Parameters: None
+//
+// Returns: scanner.Position - source position of the variable name
+//
+// Edge cases: None
+//
+// Notes: Implements the Expression interface's Pos() method
 func (v *Variable) Pos() scanner.Position { return v.NamePos }
 
 // String returns the variable name.
+//
+// Parameters: None
+//
+// Returns: string - variable name as defined in source
+//
+// Edge cases: None
+//
+// Notes: Implements the Expression interface's String() method
 func (v *Variable) String() string { return v.Name }
 
 // Assignment represents a variable assignment: foo = value or foo += value.
@@ -245,10 +393,26 @@ type Assignment struct {
 }
 
 // Pos returns the position of the variable name.
+//
+// Parameters: None
+//
+// Returns: scanner.Position - source position of the assigned variable name
+//
+// Edge cases: None
+//
+// Notes: None (Assignment does not implement Expression, uses NamePos for error reporting)
 func (a *Assignment) Pos() scanner.Position { return a.NamePos }
 
 // String returns a string representation.
 // Format: "foo = value" or "foo += value"
+//
+// Parameters: None
+//
+// Returns: string - formatted assignment with variable, operator, and value
+//
+// Edge cases: None
+//
+// Notes: None
 func (a *Assignment) String() string {
 	return a.Name + " " + a.Assigner + " " + a.Value.String()
 }
@@ -268,10 +432,26 @@ type Operator struct {
 }
 
 // Pos returns the position of the operator.
+//
+// Parameters: None
+//
+// Returns: scanner.Position - source position of the + operator
+//
+// Edge cases: None
+//
+// Notes: Implements the Expression interface's Pos() method
 func (o *Operator) Pos() scanner.Position { return o.OperatorPos }
 
 // String returns a string representation.
 // Format: "a + b"
+//
+// Parameters: None
+//
+// Returns: string - formatted binary operation with left operand, operator, right operand
+//
+// Edge cases: None (Args is always length 2, set during parsing)
+//
+// Notes: Implements the Expression interface's String() method
 func (o *Operator) String() string {
 	return o.Args[0].String() + " " + string(o.Operator) + " " + o.Args[1].String()
 }
@@ -300,9 +480,25 @@ type Select struct {
 }
 
 // Pos returns the position of the select keyword.
+//
+// Parameters: None
+//
+// Returns: scanner.Position - source position of the select keyword
+//
+// Edge cases: None
+//
+// Notes: Implements the Expression interface's Pos() method
 func (s *Select) Pos() scanner.Position { return s.KeywordPos }
 
 // String returns "select".
+//
+// Parameters: None
+//
+// Returns: string - literal "select" as keyword representation
+//
+// Edge cases: None
+//
+// Notes: Implements the Expression interface's String() method
 func (s *Select) String() string { return "select" }
 
 // ConfigurableCondition represents a condition in a select expression.
@@ -352,9 +548,25 @@ type Unset struct {
 }
 
 // Pos returns the position of the unset keyword.
+//
+// Parameters: None
+//
+// Returns: scanner.Position - source position of the unset keyword
+//
+// Edge cases: None
+//
+// Notes: Implements the Expression interface's Pos() method
 func (u *Unset) Pos() scanner.Position { return u.KeywordPos }
 
 // String returns "unset".
+//
+// Parameters: None
+//
+// Returns: string - literal "unset" as keyword representation
+//
+// Edge cases: None
+//
+// Notes: Implements the Expression interface's String() method
 func (u *Unset) String() string { return "unset" }
 
 // ExecScript represents an exec_script() call for running scripts during configuration.
@@ -376,9 +588,25 @@ type ExecScript struct {
 }
 
 // Pos returns the position of the exec_script keyword.
+//
+// Parameters: None
+//
+// Returns: scanner.Position - source position of the exec_script keyword
+//
+// Edge cases: None
+//
+// Notes: Implements the Expression interface's Pos() method
 func (e *ExecScript) Pos() scanner.Position { return e.KeywordPos }
 
 // String returns "exec_script" as the representation.
+//
+// Parameters: None
+//
+// Returns: string - literal "exec_script" as keyword representation
+//
+// Edge cases: None
+//
+// Notes: Implements the Expression interface's String() method
 func (e *ExecScript) String() string { return "exec_script" }
 
 // File represents a parsed Blueprint file.
@@ -401,8 +629,24 @@ type Definition interface {
 
 // def implements the Definition interface for Module.
 // Module is a top-level module definition.
+//
+// Parameters: None
+//
+// Returns: None
+//
+// Edge cases: None
+//
+// Notes: Private method to satisfy the Definition interface, no implementation needed
 func (m *Module) def() {}
 
 // def implements the Definition interface for Assignment.
 // Assignment is a variable assignment statement.
+//
+// Parameters: None
+//
+// Returns: None
+//
+// Edge cases: None
+//
+// Notes: Private method to satisfy the Definition interface, no implementation needed
 func (a *Assignment) def() {}

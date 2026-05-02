@@ -75,14 +75,18 @@ type Writer struct {
 //	writer := ninja.NewWriter(buildFile)
 //	writer.Rule("cc", "gcc -c $in -o $out")
 //	writer.Build("main.o", "cc", []string{"main.c"}, nil)
+//
+// Note:
+//   - Non-buffered writers are wrapped with a 64KB bufio.Writer for performance.
+//   - *bytes.Buffer and *strings.Builder are not buffered to avoid double buffering.
 func NewWriter(w io.Writer) *Writer {
 	switch w.(type) {
 	case *bytes.Buffer, *strings.Builder:
 		// Don't buffer strings.Builder or bytes.Buffer
 	default:
-		if _, ok := w.(*bufio.Writer); !ok {
-			w = bufio.NewWriterSize(w, 64*1024)
-		}
+	if _, ok := w.(*bufio.Writer); !ok { // Wrap non-buffered writers with 64KB buffer
+		w = bufio.NewWriterSize(w, 64*1024)
+	}
 	}
 	return &Writer{w: w}
 }
@@ -277,12 +281,16 @@ func escapeList(values []string) []string {
 //
 //	writer.Rule("cc", "gcc -c $in -o $out", "deps.mk")
 //	writer.Rule("link", "gcc $in -o $out")
+//
+// Note:
+//   - Writes an empty line after the rule for formatting.
+//   - Deps are written only if the first deps entry is non-empty.
 func (w *Writer) Rule(name, command string, deps ...string) {
 	fmt.Fprintf(w.w, "rule %s\n", ninjaEscapePath(name))
 	fmt.Fprintf(w.w, "  command = %s\n", ninjaEscape(command))
 	// Only write deps if non-empty and not an empty string
 	// Empty deps can occur when a rule doesn't track dependencies
-	if len(deps) > 0 && deps[0] != "" {
+	if len(deps) > 0 && deps[0] != "" { // Only write deps if non-empty and not empty string
 		fmt.Fprintf(w.w, "  deps = %s\n", strings.Join(escapeList(deps), " "))
 	}
 	fmt.Fprintln(w.w)
@@ -311,15 +319,19 @@ func (w *Writer) Rule(name, command string, deps ...string) {
 //
 //	writer.Build("main.o", "cc", []string{"main.c"}, []string{"header.h"})
 //	Result: build main.o: cc main.c | header.h
+//
+// Note:
+//   - Writes two empty lines after the build edge for formatting.
+//   - Inputs and tracked deps are space-separated in the build line.
 func (w *Writer) Build(output, rule string, inputs []string, deps []string) {
 	fmt.Fprintf(w.w, "build %s: %s", ninjaEscapePath(output), ninjaEscapePath(rule))
 	// Write inputs after rule name, separated by spaces
-	if len(inputs) > 0 {
+	if len(inputs) > 0 { // Write inputs after rule name, separated by spaces
 		fmt.Fprintf(w.w, " %s", strings.Join(escapeList(inputs), " "))
 	}
 	// Write tracked dependencies after | separator
 	// Tracked deps cause rebuild when changed (unlike order-only deps)
-	if len(deps) > 0 {
+	if len(deps) > 0 { // Write tracked dependencies after | separator
 		fmt.Fprintf(w.w, " | %s", strings.Join(escapeList(deps), " "))
 	}
 	fmt.Fprintln(w.w)
@@ -348,9 +360,13 @@ func (w *Writer) Build(output, rule string, inputs []string, deps []string) {
 //   - build <output>: <rule> <inputs> || <orderOnly>
 //     <var1> = <value1>
 //     <var2> = <value2>
+//
+// Note:
+//   - Writes an empty line after the build edge for formatting.
+//   - Order-only deps use || separator and don't trigger rebuilds.
 func (w *Writer) BuildWithVars(output, rule string, inputs []string, orderOnly []string, vars map[string]string) {
 	fmt.Fprintf(w.w, "build %s: %s", ninjaEscapePath(output), ninjaEscapePath(rule))
-	if len(inputs) > 0 {
+	if len(inputs) > 0 { // Write inputs after rule name, separated by spaces
 		fmt.Fprintf(w.w, " %s", strings.Join(escapeList(inputs), " "))
 	}
 	// Order-only deps use || separator; they build first but don't cause rebuilds

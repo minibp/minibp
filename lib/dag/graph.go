@@ -135,11 +135,11 @@ func NewGraph() *Graph {
 //   - Module Name() returns empty string: creates entry with empty string key.
 //   - Concurrent access: not thread-safe; external synchronization required.
 func (g *Graph) AddModule(m module.Module) {
-	if m != nil {
+	if m != nil { // Skip nil modules
 		g.Modules[m.Name()] = m
 		// Initialize edges slice if not exists
 		// This ensures module exists in edges map even with no deps
-		if _, exists := g.Edges[m.Name()]; !exists {
+		if _, exists := g.Edges[m.Name()]; !exists { // Check if module already has edge entry
 			g.Edges[m.Name()] = []string{}
 		}
 	}
@@ -179,10 +179,10 @@ func (g *Graph) AddModule(m module.Module) {
 func (g *Graph) AddEdge(from, to string) {
 	// Ensure both modules exist in edges map
 	// Initialize empty slices for new modules
-	if _, exists := g.Edges[from]; !exists {
+	if _, exists := g.Edges[from]; !exists { // Initialize edges for source module
 		g.Edges[from] = []string{}
 	}
-	if _, exists := g.Edges[to]; !exists {
+	if _, exists := g.Edges[to]; !exists { // Initialize edges for target module
 		g.Edges[to] = []string{}
 	}
 	// Add dependency relationship
@@ -216,11 +216,11 @@ func (g *Graph) AddEdge(from, to string) {
 //   - Returned slice is a copy; modifications don't affect internal state.
 //   - Concurrent access: not thread-safe; external synchronization required.
 func (g *Graph) GetDeps(name string) []string {
-	if deps, exists := g.Edges[name]; exists {
+	if deps, exists := g.Edges[name]; exists { // Check if module has dependency entry
 		// Return a copy to prevent external modification
 		// This protects the internal graph state
-		result := make([]string, len(deps))
-		copy(result, deps)
+		result := make([]string, len(deps)) // Allocate copy buffer
+		copy(result, deps)                  // Copy to prevent external modification
 		return result
 	}
 	return []string{}
@@ -261,24 +261,24 @@ func (g *Graph) TopoSort() ([][]string, error) {
 	// that haven't been processed yet
 	inDegree := make(map[string]int)
 	for name := range g.Modules {
-		inDegree[name] = 0
+		inDegree[name] = 0 // Initialize in-degree for all modules
 	}
 
 	// Step 2: Validate dependencies and count in-degrees
 	// For each module, count its dependencies and validate they exist
 	for from, deps := range g.Edges {
 		// Validate that the module itself exists
-		if _, exists := g.Modules[from]; !exists {
+		if _, exists := g.Modules[from]; !exists { // Validate source module exists
 			return nil, fmt.Errorf("module '%s' referenced in dependency graph does not exist", from)
 		}
 		// Validate each dependency exists
 		for _, to := range deps {
-			if _, exists := g.Modules[to]; !exists {
+			if _, exists := g.Modules[to]; !exists { // Validate dependency module exists
 				return nil, fmt.Errorf("dependency '%s' of module '%s' does not exist", to, from)
 			}
 			// "from" depends on "to", so "from" has an incoming edge
 			// Increment in-degree for dependent module
-			inDegree[from]++
+			inDegree[from]++ // Increment in-degree for dependent module
 		}
 	}
 
@@ -288,7 +288,7 @@ func (g *Graph) TopoSort() ([][]string, error) {
 	reverseEdges := make(map[string][]string)
 	for from, deps := range g.Edges {
 		for _, to := range deps {
-			reverseEdges[to] = append(reverseEdges[to], from)
+			reverseEdges[to] = append(reverseEdges[to], from) // Build reverse mapping
 		}
 	}
 
@@ -301,7 +301,7 @@ func (g *Graph) TopoSort() ([][]string, error) {
 	// Initialize queue with all nodes that have in-degree 0
 	queue := make([]string, 0, nodeCount)
 	for name, degree := range inDegree {
-		if degree == 0 {
+		if degree == 0 { // Module has no unprocessed dependencies
 			queue = append(queue, name)
 		}
 	}
@@ -309,9 +309,9 @@ func (g *Graph) TopoSort() ([][]string, error) {
 	// Process level by level
 	for len(queue) > 0 {
 		// Current level: all nodes with in-degree 0 at this iteration
-		currentLevel := make([]string, len(queue))
-		copy(currentLevel, queue)
-		queue = queue[:0] // Reset queue for next level
+		currentLevel := make([]string, len(queue)) // Snapshot current level
+		copy(currentLevel, queue)                  // Copy queue to current level
+		queue = queue[:0]                          // Clear queue for next level
 
 		// Sort level for deterministic output (critical for reproducible builds)
 		sort.Strings(currentLevel)
@@ -319,11 +319,11 @@ func (g *Graph) TopoSort() ([][]string, error) {
 
 		// Process each node in current level
 		for _, name := range currentLevel {
-			processed[name] = true
+			processed[name] = true // Mark module as processed
 			// Reduce in-degree of dependents; add to queue if in-degree reaches 0
 			for _, dependent := range reverseEdges[name] {
-				inDegree[dependent]--
-				if inDegree[dependent] == 0 {
+				inDegree[dependent]--         // Reduce in-degree after processing dependency
+				if inDegree[dependent] == 0 { // All dependencies processed, ready for queue
 					queue = append(queue, dependent)
 				}
 			}
@@ -331,17 +331,17 @@ func (g *Graph) TopoSort() ([][]string, error) {
 	}
 
 	// Cycle detection: if not all nodes were processed, a cycle exists
-	if len(processed) < nodeCount {
+	if len(processed) < nodeCount { // Not all nodes processed = cycle detected
 		var remaining []string
 		for name := range g.Modules {
-			if !processed[name] {
+			if !processed[name] { // Node not yet processed (part of cycle)
 				remaining = append(remaining, name)
 			}
 		}
 		cycleInfo := fmt.Sprintf("cycle detected in dependency graph involving modules: %v", remaining)
 		for _, name := range remaining {
 			deps := g.GetDeps(name)
-			if len(deps) > 0 {
+			if len(deps) > 0 { // Add dependency info for cycle reporting
 				cycleInfo += fmt.Sprintf("; %s depends on %v", name, deps)
 			}
 		}

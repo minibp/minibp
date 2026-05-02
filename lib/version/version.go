@@ -43,70 +43,35 @@ import (
 //   - Build-time: GitTag, GitBranch, GitCommit, GitTreeState, BuildDate, MinibpVer
 //   - Runtime: GoVersion, Compiler, Platform
 type Info struct {
-	// GitTag is the Git tag from the most recent commit, e.g., "v1.2.3".
-	// This is typically set by git describe --tags at build time.
-	// Empty if no tag exists or not injected.
-	// Returns: Tag string or "unknown" if not set
-	GitTag string `json:"gitTag"`
-
-	// GitBranch is the current Git branch name, e.g., "main", "feature/my-branch".
-	// This is typically set by git branch --show-current at build time.
-	// Returns: Branch name or "unknown" if not set
-	GitBranch string `json:"gitBranch"`
-
-	// GitCommit is the full Git commit hash (40 characters), e.g., "abc123def456...".
-	// This is set by git rev-parse HEAD at build time.
-	// Returns: Full 40-character commit SHA or "unknown" if not set
-	GitCommit string `json:"gitCommit"`
-
-	// GitTreeState describes the state of the Git working tree at build time.
-	// Values: "clean" (no uncommitted changes) or "dirty" (uncommitted changes exist).
-	// This is determined by checking git status --porcelain at build time.
-	// Returns: "clean" or "dirty" or "unknown" if not set
-	GitTreeState string `json:"gitTreeState"`
-
-	// BuildDate is the date and time of the build in ISO 8601 format, e.g., "2024-01-15T10:30:00Z".
-	// Uses UTC timezone to ensure consistent cross-timezone builds.
-	// Format: YYYY-MM-DDTHH:MM:SSZ
-	// Returns: ISO 8601 timestamp or "unknown" if not set
-	BuildDate string `json:"buildDate"`
-
-	// MinibpVer is the semantic version of minibp itself, e.g., "0.001".
-	// This differs from GitTag as it tracks the project's own versioning scheme.
-	// Defaults to "0.001" before the first official release.
-	// Returns: Semantic version string, defaults to "0.001"
-	MinibpVer string `json:"minibpVersion"`
-
-	// GoVersion is the Go runtime version, e.g., "go1.21.0".
-	// Detected at runtime via runtime.Version().
-	// Returns: Go version string from runtime
-	GoVersion string `json:"goVersion"`
-
-	// Compiler is the Go compiler used, either "gc" (standard compiler) or "gccgo".
-	// Detected at runtime via runtime.Compiler.
-	// Returns: "gc" or "gccgo"
-	Compiler string `json:"compiler"`
-
-	// Platform is the target platform in OS/arch format, e.g., "linux/amd64", "darwin/arm64".
-	// Detected at runtime via runtime.GOOS and runtime.GOARCH.
-	// Returns: OS/arch tuple, e.g., "linux/amd64", "darwin/arm64"
-	Platform string `json:"platform"`
+	GitTag       string `json:"gitTag"`        // Git tag from most recent commit (e.g., "v1.2.3"), set by git describe --tags at build time
+	GitBranch    string `json:"gitBranch"`     // Current Git branch name (e.g., "main"), set by git branch --show-current at build time
+	GitCommit    string `json:"gitCommit"`     // Full Git commit hash (40 chars), set by git rev-parse HEAD at build time
+	GitTreeState string `json:"gitTreeState"`  // Working tree state: "clean" (no changes) or "dirty" (uncommitted changes exist)
+	BuildDate    string `json:"buildDate"`     // Build timestamp in ISO 8601 format (e.g., "2024-01-15T10:30:00Z"), uses UTC timezone
+	MinibpVer    string `json:"minibpVersion"` // Project semantic version (e.g., "0.001"), differs from GitTag as it tracks project's own versioning
+	GoVersion    string `json:"goVersion"`     // Go runtime version (e.g., "go1.21.0"), detected at runtime via runtime.Version()
+	Compiler     string `json:"compiler"`      // Go compiler used: "gc" (standard) or "gccgo", detected at runtime via runtime.Compiler
+	Platform     string `json:"platform"`      // Target platform in OS/arch format (e.g., "linux/amd64"), detected via runtime.GOOS/GOARCH
 }
 
 // String returns the Git tag as the string representation of the version info.
 // This implements the fmt.Stringer interface for convenient printing,
 // allowing direct use in fmt.Printf with %s or fmt.Sprintf.
 //
-// Returns:
-//   - The GitTag value if non-empty and not "unknown"
-//   - "unknown" if the tag was not set at build time
+// Parameters:
+//   - info: The Info struct instance (receiver)
 //
-// Note: This method returns only the GitTag, not the full version info.
-// For complete version output, use Get() and access desired fields directly.
+// Returns:
+//   - The GitTag value if non-empty
+//   - Empty string if GitTag is not set
 //
 // Edge cases:
 //   - Empty GitTag returns empty string (not "unknown") since String() accesses the field directly
 //   - "unknown" GitTag returns "unknown" string
+//
+// Notes:
+//   - This method returns only the GitTag, not the full version info
+//   - For complete version output, use Get() and access desired fields directly
 //
 // Example output: "v1.2.3" or "unknown" or ""
 func (info Info) String() string {
@@ -132,28 +97,31 @@ func (info Info) String() string {
 //   - Compiler: Go compiler used, "gc" or "gccgo"
 //   - Platform: OS/arch tuple, e.g., "linux/amd64"
 //
+// Parameters: none
+//
 // Returns:
 //   - Info struct populated with all version fields
-//
-// Note: The returned struct shares no pointers with internal state,
-// making it safe to modify without affecting future Get() calls.
-// The caller may freely modify the returned struct.
 //
 // Edge cases:
 //   - If build-time injection failed, fields will have default "unknown" values
 //   - Runtime values are always populated from the running process
 //   - Platform format uses runtime.GOOS/runtime.GOARCH, not build target
+//
+// Notes:
+//   - The returned struct shares no pointers with internal state
+//   - Safe to modify without affecting future Get() calls
+//   - The caller may freely modify the returned struct
 func Get() Info {
 	return Info{
-		GitTag:       gitTag,
-		GitBranch:    gitBranch,
-		GitCommit:    gitCommit,
-		GitTreeState: gitTreeState,
-		BuildDate:    buildDate,
-		MinibpVer:    minibpVer,
-		GoVersion:    runtime.Version(),
-		Compiler:     runtime.Compiler,
-		Platform:     fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
+		GitTag:       gitTag,                                             // Build-time injected: Git tag from most recent commit
+		GitBranch:    gitBranch,                                          // Build-time injected: current branch name
+		GitCommit:    gitCommit,                                          // Build-time injected: full commit hash
+		GitTreeState: gitTreeState,                                       // Build-time injected: "clean" or "dirty"
+		BuildDate:    buildDate,                                          // Build-time injected: ISO 8601 build timestamp
+		MinibpVer:    minibpVer,                                          // Build-time injected: project semantic version
+		GoVersion:    runtime.Version(),                                  // Runtime detected: Go runtime version
+		Compiler:     runtime.Compiler,                                   // Runtime detected: compiler type ("gc" or "gccgo")
+		Platform:     fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH), // Runtime detected: OS/arch tuple
 	}
 }
 
@@ -174,39 +142,10 @@ func Get() Info {
 //	-X 'minibp/lib/version.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)'
 //	-X 'minibp/lib/version.minibpVer=0.001'
 var (
-	// gitTag is the Git tag from the most recent commit.
-	// Set by: git describe --tags --abbrev=0
-	// Injected via: -X 'minibp/lib/version.gitTag=$(git describe --tags --abbrev=0)'
-	gitTag = "unknown"
-
-	// gitBranch is the current Git branch name.
-	// Examples: "main", "feature/my-branch", "release/v2.0"
-	// Set by: git branch --show-current
-	// Injected via: -X 'minibp/lib/version.gitBranch=$(git branch --show-current)'
-	gitBranch = "unknown"
-
-	// gitCommit is the full Git commit hash (40 hex characters).
-	// Example: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
-	// Set by: git rev-parse HEAD
-	// Injected via: -X 'minibp/lib/version.gitCommit=$(git rev-parse HEAD)'
-	gitCommit = "unknown"
-
-	// gitTreeState indicates whether the working tree had uncommitted changes.
-	// Values: "clean" (no uncommitted changes) or "dirty" (uncommitted changes exist)
-	// Set by: git status --porcelain | wc -l | xargs test 0 -eq 1 && echo dirty || echo clean
-	// Injected via: -X 'minibp/lib/version.gitTreeState=$(test -z "$(git status --porcelain)" && echo clean || echo dirty)'
-	gitTreeState = "unknown"
-
-	// buildDate is the build timestamp in ISO 8601 format (UTC).
-	// Example: "2024-01-15T10:30:00Z"
-	// Format: YYYY-MM-DDTHH:MM:SSZ
-	// Set by: date -u +%Y-%m-%dT%H:%M:%SZ
-	// Injected via: -X 'minibp/lib/version.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)'
-	buildDate = "unknown"
-
-	// minibpVer is the project's semantic version string.
-	// Example: "0.001", "1.0.0", "2.3.4-beta"
-	// Starts at "0.001" before official release tagging begins.
-	// Injected via: -X 'minibp/lib/version.minibpVer=0.001'
-	minibpVer = "0.001"
+	gitTag       = "unknown" // Git tag from most recent commit, set by git describe --tags --abbrev=0
+	gitBranch    = "unknown" // Current Git branch name (e.g., "main"), set by git branch --show-current
+	gitCommit    = "unknown" // Full Git commit hash (40 hex chars), set by git rev-parse HEAD
+	gitTreeState = "unknown" // Working tree state: "clean" (no changes) or "dirty" (uncommitted changes exist)
+	buildDate    = "unknown" // Build timestamp in ISO 8601 format (UTC), set by date -u +%Y-%m-%dT%H:%M:%SZ
+	minibpVer    = "0.001"   // Project semantic version (e.g., "0.001"), tracks project's own versioning scheme
 )

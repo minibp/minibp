@@ -296,16 +296,16 @@ func (g *Graph) TopoSort() ([][]string, error) {
 
 	for from, deps := range g.edges {
 		// Validate that the source module exists in the graph.
-		if _, ok := g.nodes[from]; !ok {
+		if _, ok := g.nodes[from]; !ok { // source module must exist in the graph
 			return nil, fmt.Errorf("module '%s' referenced in dependency graph does not exist", from)
 		}
 		// Set the dependency count for the source module to the number of edges (deps).
 		depCount[from] = len(deps)
 		for _, to := range deps {
 			// Check if the target dependency exists in the graph.
-			if _, ok := g.nodes[to]; !ok {
+			if _, ok := g.nodes[to]; !ok { // target dependency must exist unless external reference
 				// Skip non-module references (e.g., file paths) that don't start with ":" or "//".
-				if !strings.HasPrefix(to, ":") && !strings.HasPrefix(to, "//") {
+				if !strings.HasPrefix(to, ":") && !strings.HasPrefix(to, "//") { // not a module reference, skip
 					continue
 				}
 				// External module references (":module" or "//namespace:module") that are missing are errors.
@@ -320,7 +320,7 @@ func (g *Graph) TopoSort() ([][]string, error) {
 	// These are modules with no dependencies, ready to be built in the first level.
 	var queue []string
 	for name, count := range depCount {
-		if count == 0 {
+		if count == 0 { // no dependencies, ready for first level
 			queue = append(queue, name)
 		}
 	}
@@ -330,7 +330,7 @@ func (g *Graph) TopoSort() ([][]string, error) {
 	var levels [][]string
 	visitedCount := 0
 	// Process nodes level by level. Each iteration handles one build level.
-	for len(queue) > 0 {
+	for len(queue) > 0 { // process all levels until queue is empty
 		// Current level contains all nodes with satisfied dependencies at this stage.
 		currentLevel := make([]string, len(queue))
 		copy(currentLevel, queue)
@@ -343,7 +343,7 @@ func (g *Graph) TopoSort() ([][]string, error) {
 			for _, v := range dependentOf[u] {
 				// Decrement the dependency count for each dependent of u.
 				depCount[v]--
-				if depCount[v] == 0 {
+				if depCount[v] == 0 { // all dependencies satisfied, ready for next level
 					// All dependencies of v are satisfied; add to next level queue.
 					nextQueue = append(nextQueue, v)
 				}
@@ -355,7 +355,7 @@ func (g *Graph) TopoSort() ([][]string, error) {
 	}
 
 	// If not all nodes were visited, there is a circular dependency.
-	if visitedCount != len(g.nodes) {
+	if visitedCount != len(g.nodes) { // not all nodes visited, circular dependency exists
 		return nil, fmt.Errorf("circular dependency detected")
 	}
 
@@ -446,7 +446,7 @@ func CollectModulesWithNames(
 ) (map[string]*parser.Module, error) {
 	// Use default name extraction logic if no custom function is provided:
 	// extract the "name" property from the module using the evaluator.
-	if nameFunc == nil {
+	if nameFunc == nil { // use default name extraction logic
 		nameFunc = func(m *parser.Module, key string) string {
 			return props.GetStringPropEval(m, key, eval)
 		}
@@ -457,12 +457,12 @@ func CollectModulesWithNames(
 	// Non-module definitions (variable assignments, namespace blocks) are ignored.
 	for _, def := range allDefs {
 		mod, ok := def.(*parser.Module)
-		if !ok {
+		if !ok { // not a module definition, skip
 			continue
 		}
 		// Extract module name using the provided or default name function.
 		name := nameFunc(mod, "name")
-		if name == "" {
+		if name == "" { // empty name, skip module
 			continue
 		}
 		// Evaluate all properties in the module, resolving variables and select() expressions.
@@ -470,20 +470,20 @@ func CollectModulesWithNames(
 		// Merge architecture-specific variant properties into the module based on target arch.
 		variant.MergeVariantProps(mod, opts.Arch, true, eval)
 		// Skip modules that are not enabled for the current build target.
-		if !variant.IsModuleEnabledForTarget(mod, true) {
+		if !variant.IsModuleEnabledForTarget(mod, true) { // module disabled for target
 			continue
 		}
 		modules[name] = mod
 	}
 
 	// Expand global glob patterns (e.g., wildcard file references) across all modules first.
-	if err := glob.ExpandGlobs(modules, opts.SrcDir); err != nil {
+	if err := glob.ExpandGlobs(modules, opts.SrcDir); err != nil { // global glob expansion failed
 		return nil, fmt.Errorf("error during global glob expansion: %w", err)
 	}
 
 	// Expand module-specific glob patterns (e.g., in srcs, header_libs properties).
 	for _, mod := range modules {
-		if err := glob.ExpandInModule(mod, opts.SrcDir); err != nil {
+		if err := glob.ExpandInModule(mod, opts.SrcDir); err != nil { // per-module glob expansion failed
 			name := nameFunc(mod, "name")
 			return nil, fmt.Errorf("error expanding globs for module %s: %w", name, err)
 		}
@@ -567,7 +567,7 @@ func addResolvedDeps(graph *Graph, from string, deps []string, namespaces map[st
 	for _, dep := range deps {
 		// Skip non-module references if moduleRefsOnly is enabled.
 		// This filters out file paths or other non-module dependency values.
-		if moduleRefsOnly && !strings.HasPrefix(dep, ":") && !strings.HasPrefix(dep, "//") {
+		if moduleRefsOnly && !strings.HasPrefix(dep, ":") && !strings.HasPrefix(dep, "//") { // not a module reference, skip
 			continue
 		}
 		// Resolve the dependency reference to a canonical module name using namespaces,
@@ -663,28 +663,28 @@ func NewGenerator(graph *Graph, modules map[string]*parser.Module, opts Options)
 func pathPrefixForOutput(srcDir, outFile string) string {
 	// Get absolute path of the build output directory (parent directory of the Ninja file).
 	absBuildDir, err := filepath.Abs(filepath.Dir(outFile))
-	if err != nil {
+	if err != nil { // failed to get absolute path of build directory
 		return ""
 	}
 	// Get absolute path of the source directory.
 	absSourceDir, err := filepath.Abs(srcDir)
-	if err != nil {
+	if err != nil { // failed to get absolute path of source directory
 		return ""
 	}
 
 	// If build and source directories are the same, no prefix is needed.
-	if absBuildDir == absSourceDir {
+	if absBuildDir == absSourceDir { // same directory, no prefix needed
 		return ""
 	}
 
 	// Calculate relative path from build directory to source directory.
 	relPath, err := filepath.Rel(absBuildDir, absSourceDir)
-	if err != nil {
+	if err != nil { // failed to calculate relative path
 		return ""
 	}
 
 	// If relative path is current directory, no prefix needed.
-	if relPath == "." {
+	if relPath == "." { // relative path is current directory
 		return ""
 	}
 
@@ -724,21 +724,21 @@ func buildRegenCmd(opts Options) string {
 
 	// Use forward slashes for the executable path (Ninja expects POSIX-style paths).
 	regenCmd := filepath.ToSlash(exe)
-	if opts.Arch != "" {
+	if opts.Arch != "" { // add architecture flag if specified
 		regenCmd += " -arch " + opts.Arch
 	}
-	if opts.TargetOS != "" {
+	if opts.TargetOS != "" { // add target OS flag if specified
 		regenCmd += " -os " + opts.TargetOS
 	}
 	// Check if the single input is a directory to add -a (scan all) flag.
-	if len(opts.Inputs) == 1 {
+	if len(opts.Inputs) == 1 { // single input, check if it's a directory
 		fi, err := os.Stat(opts.Inputs[0])
-		if err == nil && fi.IsDir() {
+		if err == nil && fi.IsDir() { // input is a directory, add -a flag
 			regenCmd += " -a"
 		}
 	}
 	regenCmd += " -o " + opts.OutFile
-	if len(opts.Inputs) > 0 {
+	if len(opts.Inputs) > 0 { // add input files to command
 		regenCmd += " " + strings.Join(opts.Inputs, " ")
 	}
 	return regenCmd
@@ -775,15 +775,15 @@ func toolchainFromOptions(opts Options) ninja.Toolchain {
 
 	// Auto-detect cross-compilation toolchain based on target architecture and OS.
 	// This uses the toolchain package to find arch-specific compilers (e.g., aarch64-linux-gnu-gcc).
-	if opts.Arch != "" {
-		if arch, err := toolchain.ParseArchitecture(opts.Arch); err == nil {
+	if opts.Arch != "" { // cross-compilation arch specified
+		if arch, err := toolchain.ParseArchitecture(opts.Arch); err == nil { // valid arch
 			osStr := opts.TargetOS
-			if osStr == "" {
-				osStr = "linux" // default OS for cross-compilation
+			if osStr == "" { // default to linux for cross-compilation
+				osStr = "linux"
 			}
-			if os, err := toolchain.ParseOS(osStr); err == nil {
+			if os, err := toolchain.ParseOS(osStr); err == nil { // valid OS
 				config := toolchain.NewToolchainConfig()
-				if detected, err := config.DetectToolchain(arch, os); err == nil {
+				if detected, err := config.DetectToolchain(arch, os); err == nil { // toolchain detected
 					tc.CC = detected.CC
 					tc.CXX = detected.CXX
 					tc.AR = detected.AR
@@ -792,28 +792,28 @@ func toolchainFromOptions(opts Options) ninja.Toolchain {
 		}
 	}
 
-	if opts.CC != "" {
+	if opts.CC != "" { // user-specified C compiler
 		tc.CC = opts.CC
 	}
-	if opts.CXX != "" {
+	if opts.CXX != "" { // user-specified C++ compiler
 		tc.CXX = opts.CXX
 	}
-	if opts.AR != "" {
+	if opts.AR != "" { // user-specified archive tool
 		tc.AR = opts.AR
 	}
-	if opts.LD != "" {
+	if opts.LD != "" { // user-specified linker
 		tc.LD = opts.LD
 	}
-	if opts.Sysroot != "" {
+	if opts.Sysroot != "" { // user-specified sysroot for cross-compilation
 		tc.Sysroot = opts.Sysroot
 	}
-	if opts.LTO != "" {
+	if opts.LTO != "" { // user-specified LTO mode
 		tc.Lto = opts.LTO
 	}
 	// Handle Ccache: "no" disables it, any other non-empty value enables it.
-	if opts.Ccache == "no" {
+	if opts.Ccache == "no" { // ccache explicitly disabled
 		tc.Ccache = ""
-	} else if opts.Ccache != "" {
+	} else if opts.Ccache != "" { // ccache path specified
 		tc.Ccache = opts.Ccache
 	}
 	return tc

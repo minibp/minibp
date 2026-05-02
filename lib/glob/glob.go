@@ -75,7 +75,7 @@ var (
 //   - Multiple identical source paths are deduplicated.
 //   - If a pattern starts with "//" (absolute path), baseDir is ignored.
 func ExpandInModule(m *parser.Module, baseDir string) error {
-	if m.Map == nil {
+	if m.Map == nil { // Return early if module has no properties map
 		return nil
 	}
 	for _, prop := range m.Map.Properties {
@@ -86,20 +86,20 @@ func ExpandInModule(m *parser.Module, baseDir string) error {
 				for _, v := range l.Values {
 					if s, ok := v.(*parser.String); ok {
 						pattern := s.Value
-						if strings.Contains(pattern, "*") {
+						if strings.Contains(pattern, "*") { // Glob pattern detected, needs expansion
 							// Check cache first with read lock
-							globCacheMu.RLock()
+							globCacheMu.RLock() // Acquire read lock to safely check cache
 							matches, ok := globCache[pattern]
 							globCacheMu.RUnlock()
 
-							if ok {
+							if ok { // Cache hit, use precomputed matches
 								for _, match := range matches {
 									if !seen[match] {
 										seen[match] = true
 										expandedSrcs = append(expandedSrcs, &parser.String{Value: match})
 									}
 								}
-							} else {
+						} else { // Cache miss, expand pattern and update cache
 								// Fallback to individual expansion if not in cache
 								matches, err := expandGlob(pattern, baseDir)
 								if err != nil {
@@ -112,8 +112,8 @@ func ExpandInModule(m *parser.Module, baseDir string) error {
 									}
 								}
 							}
-						} else {
-							if !seen[pattern] {
+					} else { // Non-glob pattern, add as-is without expansion
+						if !seen[pattern] { // Avoid duplicate source entries
 								seen[pattern] = true
 								expandedSrcs = append(expandedSrcs, v)
 							}
@@ -146,15 +146,15 @@ func ExpandInModule(m *parser.Module, baseDir string) error {
 func ExpandGlobs(modules map[string]*parser.Module, baseDir string) error {
 	patterns := make(map[string]bool)
 	for _, m := range modules {
-		if m.Map == nil {
+		if m.Map == nil { // Skip modules with no properties map
 			continue
 		}
 		for _, prop := range m.Map.Properties {
-			if prop.Name == "srcs" {
-				if l, ok := prop.Value.(*parser.List); ok {
+			if prop.Name == "srcs" { // Only process srcs properties
+		if l, ok := prop.Value.(*parser.List); ok { // Check if srcs is a list type
 					for _, v := range l.Values {
-						if s, ok := v.(*parser.String); ok {
-							if strings.Contains(s.Value, "*") {
+			if s, ok := v.(*parser.String); ok { // Only process string values in srcs list
+							if strings.Contains(s.Value, "*") { // Collect glob patterns for batch expansion
 								patterns[s.Value] = true
 							}
 						}
@@ -165,14 +165,14 @@ func ExpandGlobs(modules map[string]*parser.Module, baseDir string) error {
 	}
 
 	for pattern := range patterns {
-		globCacheMu.RLock()
+		globCacheMu.RLock() // Acquire read lock to check cache
 		_, ok := globCache[pattern]
 		globCacheMu.RUnlock()
 
-		if !ok {
+		if !ok { // Cache miss, need to expand and cache
 			globCacheMu.Lock()
 			// Re-check after acquiring write lock
-			if _, ok := globCache[pattern]; !ok {
+			if _, ok := globCache[pattern]; !ok { // Double-check cache after write lock
 				matches, err := expandGlob(pattern, baseDir)
 				if err != nil {
 					globCacheMu.Unlock()
@@ -221,32 +221,32 @@ func expandGlob(pattern, baseDir string) ([]string, error) {
 
 	// Handle recursive glob (**) pattern separately
 	// Recursive patterns require directory walking
-	if strings.Contains(pattern, "**") {
+	if strings.Contains(pattern, "**") { // Recursive glob requires directory traversal
 		// Determine optimal starting directory for walk
 		// This avoids traversing entire directory tree unnecessarily
 		walkDir := recursiveGlobRoot(pattern, baseDir)
 		err := filepath.Walk(walkDir, func(path string, info os.FileInfo, err error) error {
 			// Skip directories; pattern matching applies to files only
 			// Also propagate any walk errors
-			if err != nil || info.IsDir() {
-				if info != nil && info.IsDir() && skipWalkDir(info.Name()) {
+			if err != nil || info.IsDir() { // Skip directories or propagate walk errors
+				if info != nil && info.IsDir() && skipWalkDir(info.Name()) { // Skip VCS and cache directories
 					return filepath.SkipDir
 				}
 				return err
 			}
 			// Skip symlinks to prevent directory traversal
-			if info.Mode()&os.ModeSymlink != 0 {
+			if info.Mode()&os.ModeSymlink != 0 { // Skip symlinks to prevent directory traversal issues
 				return nil
 			}
 			// Convert absolute path to relative for consistency
-			relPath, err := filepath.Rel(baseDir, path)
+			relPath, err := filepath.Rel(baseDir, path) // Convert absolute path to relative for consistency
 			if err != nil {
 				return err
 			}
 			// Use forward slashes for cross-platform consistency
 			relPath = filepath.ToSlash(relPath)
 			// Check if relative path matches the recursive pattern
-			if matchRecursivePattern(filepath.ToSlash(pattern), relPath) {
+			if matchRecursivePattern(filepath.ToSlash(pattern), relPath) { // Check if file path matches recursive pattern
 				result = append(result, relPath)
 			}
 			return nil
@@ -257,7 +257,7 @@ func expandGlob(pattern, baseDir string) ([]string, error) {
 	} else {
 		// Simple glob: use filepath.Glob directly
 		// Join pattern with baseDir for absolute pattern
-		fullPattern := filepath.Join(baseDir, pattern)
+		fullPattern := filepath.Join(baseDir, pattern) // Combine base directory with pattern for absolute path
 		matches, err := filepath.Glob(fullPattern)
 		if err != nil {
 			return nil, err
@@ -304,13 +304,13 @@ func recursiveGlobRoot(pattern, baseDir string) string {
 	for _, part := range parts {
 		// Stop at ** or any other glob metacharacter (* ? [)
 		// This identifies the fixed prefix before wildcards
-		if part == "**" || strings.ContainsAny(part, "*?[") {
+		if part == "**" || strings.ContainsAny(part, "*?[") { // Stop at glob metacharacters to find fixed prefix
 			break
 		}
 		prefix = append(prefix, part)
 	}
 	// If pattern has no fixed prefix, walk entire baseDir
-	if len(prefix) == 0 {
+	if len(prefix) == 0 { // No fixed prefix, walk entire base directory
 		return baseDir
 	}
 	// Join prefix parts with baseDir to get walk root
@@ -318,12 +318,21 @@ func recursiveGlobRoot(pattern, baseDir string) string {
 }
 
 var skipDirs = map[string]bool{
-	".git":    true,
-	".minibp": true,
-	".hg":     true,
-	".svn":    true,
+	".git":    true, // Git version control directory, skip to avoid scanning VCS metadata
+	".minibp": true, // minibp cache directory, skip to avoid scanning internal build files
+	".hg":     true, // Mercurial version control directory, skip
+	".svn":    true, // Subversion version control directory, skip
 }
 
+// skipWalkDir checks if a directory name should be skipped during recursive glob walks.
+// It checks against a predefined list of directories (e.g., .git, .minibp) that
+// should not be traversed to improve performance and avoid scanning irrelevant files.
+//
+// Parameters:
+//   - name: The base name of the directory to check.
+//
+// Returns:
+//   - true if the directory is in the skip list, false otherwise.
 func skipWalkDir(name string) bool {
 	return skipDirs[name]
 }
@@ -393,12 +402,13 @@ func splitGlobParts(path string) []string {
 //   - ** alone matches any path (including empty).
 //   - Path longer than pattern is handled by iterative ** match.
 func matchRecursiveParts(patternParts, pathParts []string) bool {
-	// Stack frame: patternParts, pathParts, state
-	// state: 0 = initial, 1 = tried zero-match for **, now try one-match
+	// frame represents a stack frame for iterative recursive glob pattern matching.
+	// It tracks the remaining pattern and path parts to process, along with a state
+	// variable for backtracking when handling ** wildcards.
 	type frame struct {
-		patternParts []string
-		pathParts    []string
-		state        int
+		patternParts []string // Remaining glob pattern segments to match against path
+		pathParts    []string // Remaining path segments to check against pattern
+		state        int      // Backtracking state: 0=initial, 1=tried zero-match for **
 	}
 
 	stack := []frame{{patternParts: patternParts, pathParts: pathParts, state: 0}}

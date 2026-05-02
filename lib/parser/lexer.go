@@ -123,34 +123,40 @@ type Token struct {
 // sequences into meaningful tokens that represent the syntactic structure
 // of the Blueprint source code.
 type Lexer struct {
-	scanner scanner.Scanner // The underlying Go scanner - provides character scanning
-	ch      rune            // ch is the most recent rune scanned by the underlying scanner.
-	// It is cached to allow peeking (via the peek() method) and to avoid
-	// re-scanning when processing multi-character tokens.
-	errors []error // errors collects non-fatal lexer errors (e.g., invalid characters, malformed string literals) encountered during scanning. These errors are returned via the Errors() method for the parser to handle. Scanning continues after these errors to catch multiple issues in one pass.
+	scanner scanner.Scanner // Underlying Go text/scanner for character scanning
+	ch      rune            // Most recent rune scanned; cached for peek() and multi-char token processing
+	errors  []error         // Non-fatal lexer errors (invalid chars, malformed strings); returned via Errors()
 }
 
 // NewLexer creates a new lexer from an io.Reader.
-// It initializes the Go scanner with appropriate mode settings for Blueprint.
+// Initializes the Go scanner with Blueprint-specific mode settings.
 //
-// The scanner is configured with the following modes:
+// Scanner configuration:
 //   - ScanIdents: Recognize identifiers (variable names, module types)
 //   - ScanInts: Recognize integer literals (42, 100, -10)
 //   - ScanStrings: Recognize quoted strings ("hello", 'hello')
 //   - ScanRawStrings: Recognize raw strings (`hello`)
 //   - ScanComments: Skip comments entirely from the token stream
 //
-// The lexer also sets up:
-//   - Whitespace handling: Space, tab, newline, carriage return are skipped
-//   - Error callback: Lexer errors are collected in the errors slice
-//   - Filename tracking: The filename is stored for error reporting
+// Additional setup:
+//   - Whitespace (space, tab, newline, carriage return) is skipped
+//   - Errors are collected in the errors slice via callback
+//   - Filename is stored for error reporting
 //
 // Parameters:
 //   - r: The input reader containing Blueprint source code
 //   - fileName: The name of the file being lexed (used for error messages)
 //
 // Returns:
-//   - A new Lexer instance ready to produce tokens
+//   - *Lexer: New lexer instance ready to produce tokens
+//
+// Edge cases:
+//   - Empty input: Lexer will return EOF on first NextToken() call
+//   - Invalid UTF-8: Scanner will report errors via the error callback
+//
+// Notes:
+//   - The lexer primes itself with the first character immediately after creation
+//   - Comments are skipped entirely and not emitted as tokens
 //
 // Example usage:
 //
@@ -166,60 +172,83 @@ func NewLexer(r io.Reader, fileName string) *Lexer {
 		l.errors = append(l.errors, fmt.Errorf("%s: %s", s.Position, msg))
 	}
 	// Allow scanning strings (quoted and raw) and comments.
-	l.scanner.Mode = scanner.ScanIdents | scanner.ScanInts | scanner.ScanStrings | scanner.ScanRawStrings | scanner.ScanComments
-	l.scanner.Whitespace = 1<<' ' | 1<<'\t' | 1<<'\n' | 1<<'\r'
-	l.next()
+	l.scanner.Mode = scanner.ScanIdents | scanner.ScanInts | scanner.ScanStrings | scanner.ScanRawStrings | scanner.ScanComments // Set scanner to recognize required token types
+	l.scanner.Whitespace = 1<<' ' | 1<<'\t' | 1<<'\n' | 1<<'\r'                                                                  // Configure scanner to skip whitespace characters
+	l.next()                                                                                                                     // Prime lexer with first character from input
 	return l
 }
 
 // next advances the lexer to the next character in the input stream.
-// It calls the underlying Go scanner's Scan() method to retrieve the next rune.
-// This is the fundamental operation for traversing the source text character by character.
+// Calls the underlying Go scanner's Scan() method to retrieve the next rune.
 // After calling next(), the ch field contains the next character to be processed.
+//
+// Parameters: None
+//
+// Returns: None (updates l.ch field directly)
+//
+// Edge cases:
+//   - At end of input, l.ch is set to scanner.EOF
+//   - Whitespace and comments are skipped automatically by the underlying scanner
+//
+// Notes:
+//   - Internal method, not intended for external use
 func (l *Lexer) next() {
 	l.ch = l.scanner.Scan()
 }
 
 // peek returns the next character without advancing the scanner.
-// This allows the lexer to look ahead at the upcoming character
-// to determine how to tokenize it (e.g., to distinguish += from +).
+// Allows the lexer to look ahead at the upcoming character to determine tokenization
+// (e.g., distinguish += from + by checking for '=' after '+').
+//
+// Parameters: None
+//
 // Returns:
-//   - The next rune in the input, or EOF if at end of input
+//   - rune: The next rune in the input, or scanner.EOF if at end of input
+//
+// Edge cases:
+//   - Returns scanner.EOF if at end of input
+//   - Does not skip whitespace or comments (relies on underlying scanner state)
+//
+// Notes:
+//   - Internal method, not intended for external use
 func (l *Lexer) peek() rune {
 	return l.scanner.Peek()
 }
 
-// NextToken returns the next token from the input.
+// NextToken returns the next token from the input stream.
 // This is the main entry point for the parser to consume tokens.
-// It handles all token types: special tokens (EOF, ILLEGAL), literals (IDENT, STRING, INT, BOOL),
-// and symbols (parentheses, braces, brackets, colon, comma, operators).
-// The lexer automatically skips comments and whitespace.
+// Handles all token types: special tokens (EOF, ILLEGAL), literals (IDENT, STRING, INT, BOOL),
+// and symbols (parentheses, braces, brackets, operators, separators).
+// Automatically skips comments and whitespace.
 //
 // Token processing flow:
-//  1. Record the current source position for the token
-//  2. Switch on the current character to determine token type
-//  3. For identifiers, further classify as keyword or regular identifier
-//  4. For multi-character tokens (=, +=), peek at the next character
-//  5. Advance to the next character
-//  6. Return the complete token
+//  1. Record current source position for the token
+//  2. Dispatch on current character to determine token type
+//  3. Classify identifiers as keywords (bool, unset) or regular identifiers
+//  4. Check for multi-character tokens (e.g., +=) via peek()
+//  5. Advance to next character after processing
+//  6. Return complete token
 //
-// Special handling:
-//   - '+' followed by '=': Returns PLUSEQ token, advances past both
-//   - 'true'/'false' identifiers: Returns BOOL token
-//   - 'unset' identifier: Returns UNSET token
-//   - Unknown characters: Returns ILLEGAL token, records error
+// Parameters: None
 //
 // Returns:
-//   - Token: The next lexical token with type, literal value, and position
+//   - Token: Next lexical token with type, literal value, and source position
 //
-// Error cases:
-//   - Invalid characters are recorded but scanning continues
-//   - Negative character codes (end of input) return EOF token
+// Edge cases:
+//   - EOF: Returns Token with Type=EOF when no more input
+//   - ILLEGAL: Returns Token with Type=ILLEGAL for unrecognized characters, records error
+//   - Whitespace/comments: Skipped automatically, no tokens produced for them
+//   - Identifiers "true"/"false": Returned as BOOL type, not IDENT
+//   - Identifier "unset": Returned as UNSET type, not IDENT
+//
+// Notes:
+//   - Primary method for parsers to consume lexer output
+//   - Errors are collected internally and accessible via Errors()
 func (l *Lexer) NextToken() Token {
 	var tok Token
-	tok.Pos = l.scanner.Position
+	tok.Pos = l.scanner.Position // Record current position for token error reporting
 
-	switch l.ch {
+	switch l.ch { // Dispatch on current character to determine token type
 	case scanner.EOF:
 		// End of file - return special EOF token
 		tok.Type = EOF
@@ -266,8 +295,8 @@ func (l *Lexer) NextToken() Token {
 		l.next()
 	case '+':
 		// Plus operator - check for += compound assignment
-		l.next()
-		if l.ch == '=' {
+		l.next()         // Advance past the '+' character
+		if l.ch == '=' { // Check for += compound assignment
 			tok.Type = PLUSEQ
 			tok.Literal = "+="
 			l.next()
@@ -285,11 +314,10 @@ func (l *Lexer) NextToken() Token {
 		tok.Type = AT
 		tok.Literal = "@"
 		l.next()
-	case scanner.Comment:
-		// Skip comments and get next token
-		// Comments are filtered out entirely from the token stream
-		l.next()
-		return l.NextToken()
+	case scanner.Comment: // Skip comments entirely from token stream
+		// Comments are filtered out, no tokens produced for them
+		l.next()             // Advance past the comment token
+		return l.NextToken() // Recursively get next non-comment token
 	case scanner.Int:
 		// Integer literal (base-10 number)
 		tok.Type = INT
@@ -315,15 +343,13 @@ func (l *Lexer) NextToken() Token {
 			tok.Type = IDENT
 		}
 		l.next()
-	case '\n', '\t', ' ', '\r':
-		// Skip whitespace and get next token
-		// All whitespace is treated as token separators
-		l.next()
-		return l.NextToken()
+	case '\n', '\t', ' ', '\r': // Skip whitespace characters
+		// Whitespace is treated as token separators
+		l.next()             // Advance past whitespace
+		return l.NextToken() // Recursively get next non-whitespace token
 	default:
 		// Unknown character - record error but continue processing
-		if l.ch < 0 {
-			// Negative character means EOF was reached
+		if l.ch < 0 { // Negative character code indicates EOF
 			tok.Type = EOF
 		} else {
 			// Illegal character - not recognized by the scanner
@@ -339,51 +365,83 @@ func (l *Lexer) NextToken() Token {
 }
 
 // Position returns the current scanner position.
-// This is used for error reporting to show exactly where in the source file an error occurred.
-// The position includes filename, line number, and column number.
+// Used for error reporting to pinpoint exact location of errors in source files.
+// Position includes filename, line number, and column number.
+//
+// Parameters: None
+//
+// Returns:
+//   - scanner.Position: Current position with file, line, column
+//
+// Edge cases:
+//   - Position is valid even after EOF (returns last scanned position)
+//
+// Notes:
+//   - This is the same position that would be used for the next token
 func (l *Lexer) Position() scanner.Position {
 	return l.scanner.Position
 }
 
-// Error creates an error with position information.
-// This is a helper for generating lexer errors with the current source position.
-// It includes the file location in the error message for accurate error reporting.
+// Error creates an error with current source position information.
+// Helper for generating lexer errors with file location for accurate reporting.
+//
 // Parameters:
 //   - format: Printf-style format string
 //   - args: Arguments for the format string
 //
 // Returns:
-//   - An error with position information formatted as "filename:line:column: message"
+//   - error: Formatted as "filename:line:column: message"
+//
+// Edge cases:
+//   - Position is the current scanner position at the time of the call
+//
+// Notes:
+//   - This is a convenience method for creating position-aware errors
 func (l *Lexer) Error(format string, args ...interface{}) error {
 	return fmt.Errorf("%s: %s", l.scanner.Position, fmt.Sprintf(format, args...))
 }
 
-// Errors returns lexer diagnostics collected from text/scanner.
-// These are errors encountered during scanning, such as invalid characters or malformed tokens.
-// Lexer errors are collected and returned separately so the parser can decide
-// whether to continue or abort processing.
+// Errors returns lexer diagnostics collected during scanning.
+// Errors include invalid characters, malformed tokens, and scanner-reported issues.
+// Collected separately so the parser can decide whether to continue or abort.
+//
+// Parameters: None
+//
 // Returns:
-//   - []error: List of lexer errors, empty if no errors encountered
+//   - []error: List of lexer errors; empty if no errors encountered
+//
+// Edge cases:
+//   - Errors are non-fatal; scanning continues after errors to collect multiple issues
+//
+// Notes:
+//   - Errors are not cleared automatically; callers should check after full parse
 func (l *Lexer) Errors() []error {
 	return l.errors
 }
 
 // Unquote removes quotes from a string literal.
-// This is a wrapper around strconv.Unquote that handles Go string syntax,
-// including escape sequences like \n, \t, \", etc.
+// Wrapper around strconv.Unquote supporting Go string syntax,
+// including escape sequences like \n, \t, \\, \", etc.
 //
-// Supported string formats:
-//   - Double-quoted strings: "hello\nworld" - supports escape sequences
-//   - Single-quoted strings: 'hello' - supports escape sequences
-//   - Raw strings: `hello\nworld` - no escape processing
+// Supported formats:
+//   - Double-quoted: "hello" (supports escape sequences)
+//   - Single-quoted: 'hello' (supports escape sequences)
+//   - Raw: `hello` (no escape processing)
 //
 // Parameters:
-//   - s: A string literal (including quotes)
+//   - s: String literal including surrounding quotes
 //
 // Returns:
-//   - string: The unquoted string content
-//   - error: nil if successful, otherwise an error (e.g., invalid escape sequence,
-//     unterminated string, invalid unicode surrogate)
+//   - string: Unquoted content; empty string on error
+//   - error: nil on success; error for invalid escapes, unterminated strings, etc.
+//
+// Edge cases:
+//   - Unterminated strings return an error
+//   - Invalid escape sequences return an error
+//   - Raw strings do not process any escape sequences
+//
+// Notes:
+//   - This is a convenience wrapper around the standard strconv.Unquote
 //
 // Example:
 //
@@ -394,8 +452,19 @@ func Unquote(s string) (string, error) {
 }
 
 // String returns a human-readable representation of a TokenType.
-// This is useful for debugging and error messages.
-// It converts the internal token type constant to a descriptive string.
+// Useful for debugging, error messages, and logging.
+// Converts internal token type constants to descriptive strings.
+//
+// Parameters: None
+//
+// Returns:
+//   - string: Token type name (e.g., "EOF", "IDENT") or "Token(N)" for unknown types
+//
+// Edge cases:
+//   - Unknown TokenType values return "Token(N)" where N is the numeric value
+//
+// Notes:
+//   - Satisfies the fmt.Stringer interface
 func (t TokenType) String() string {
 	switch t {
 	case EOF:
@@ -450,21 +519,39 @@ type TokenError struct {
 	Message string           // Description of the error
 }
 
-// Error returns a formatted error string including the position and message.
-// The format is "filename:line:column: message" for easy parsing by editors.
+// Error returns a formatted error string with position and message.
+// Format is "filename:line:column: message" for easy parsing by editors.
+//
+// Parameters: None
+//
+// Returns:
+//   - string: Formatted error string with position and message
+//
+// Edge cases:
+//   - Empty message is allowed, results in "filename:line:column: "
+//
+// Notes:
+//   - Satisfies the standard error interface
 func (e *TokenError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Pos, e.Message)
 }
 
 // NewTokenError creates a new token error with the given position and message.
-// This is a convenience constructor for TokenError that wraps the message
-// in the error interface.
+// Convenience constructor for TokenError that implements the error interface.
+//
 // Parameters:
-//   - pos: The source position where the error occurred
-//   - msg: The error message
+//   - pos: Source position where the error occurred
+//   - msg: Error message describing the issue
 //
 // Returns:
-//   - error: A TokenError with the specified position and message
+//   - error: TokenError instance with specified position and message
+//
+// Edge cases:
+//   - Empty message is allowed
+//   - Position can be zero-valued if unknown
+//
+// Notes:
+//   - The returned error is of type *TokenError, so callers can type-assert if needed
 func NewTokenError(pos scanner.Position, msg string) error {
 	return &TokenError{Pos: pos, Message: msg}
 }

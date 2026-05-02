@@ -1,5 +1,5 @@
 // Package parser provides lexical analysis and parsing for Blueprint build definitions.
-// Eval subpackage - AST evaluation and expression processing.
+// Eval contains AST evaluation and expression processing logic.
 //
 // This package implements the third stage of the Blueprint build system:
 // it takes AST nodes from the parser and evaluates them to produce Go values.
@@ -96,6 +96,13 @@ type Evaluator struct {
 //
 // Returns:
 //   - A new Evaluator instance ready to evaluate expressions
+//
+// Edge cases:
+//   - No parameters, so no input validation is required
+//   - strictSelect is initialized to true by default
+//
+// Notes:
+//   - The caller is responsible for populating variables and config before evaluation
 func NewEvaluator() *Evaluator {
 	return &Evaluator{
 		vars:         make(map[string]interface{}),
@@ -120,6 +127,12 @@ func NewEvaluator() *Evaluator {
 //
 // Parameters:
 //   - strict: Whether to enforce strict select() evaluation
+//
+// Returns:
+//   - None (void method)
+//
+// Edge cases:
+//   - No validation on the strict parameter (accepts any bool value)
 func (e *Evaluator) SetStrictSelect(strict bool) {
 	e.strictSelect = strict
 }
@@ -131,6 +144,9 @@ func (e *Evaluator) SetStrictSelect(strict bool) {
 //
 // Returns:
 //   - []error: List of select() evaluation errors
+//
+// Edge cases:
+//   - Returns nil slice if no select errors occurred
 func (e *Evaluator) SelectErrors() []error {
 	return e.selectErrors
 }
@@ -304,7 +320,7 @@ func (e *Evaluator) Eval(expr Expression) interface{} {
 		return result
 	case *Variable:
 		// Variable reference - look up in variable table
-		if val, ok := e.vars[v.Name]; ok {
+		if val, ok := e.vars[v.Name]; ok { // Variable exists in evaluator's variable table
 			return val
 		}
 		// Undefined variable returns nil (will be handled by caller)
@@ -946,11 +962,30 @@ func (e *Evaluator) isConfigUnset(val interface{}) bool {
 //   - Function arguments are evaluated recursively (supports variable references in args)
 //   - For soong_config_variable, checks both "namespace.variable" and "soong_config.namespace.variable"
 //   - The fallback to config[FunctionName] allows extensibility for custom conditions
+// selectCondHandler is a function type for handling select condition evaluation.
+// Each handler takes an Evaluator instance and a ConfigurableCondition AST node,
+// returning the evaluated condition value or nil if not found.
+//
+// Parameters:
+//   - e: The Evaluator instance for variable/config lookups
+//   - cond: The ConfigurableCondition AST node to evaluate
+//
+// Returns:
+//   - interface{}: The evaluated condition value, or nil if not found
 type selectCondHandler func(e *Evaluator, cond ConfigurableCondition) interface{}
 
-var selectCondDispatch map[string]selectCondHandler
-var selectCondInitOnce sync.Once
+var selectCondDispatch map[string]selectCondHandler // Dispatch map for select condition handlers, initialized once
+var selectCondInitOnce sync.Once                    // Ensures selectCondDispatch is initialized only once (thread-safe)
 
+// initSelectCondDispatch initializes and returns the select condition dispatch map.
+// This map associates select condition function names (e.g., "arch", "os") with their handler functions.
+//
+// Returns:
+//   - map[string]selectCondHandler: Initialized dispatch map with all supported condition handlers
+//
+// Notes:
+//   - This function is called once via sync.Once to initialize selectCondDispatch
+//   - To add new condition handlers, add an entry to the returned map
 func initSelectCondDispatch() map[string]selectCondHandler {
 	return map[string]selectCondHandler{
 		"soong_config_variable": evalSoongConfigVar,
@@ -965,6 +1000,7 @@ func initSelectCondDispatch() map[string]selectCondHandler {
 }
 
 func (e *Evaluator) evalSelectCondition(cond ConfigurableCondition) interface{} {
+	// Initialize select condition dispatch map once (thread-safe via sync.Once)
 	selectCondInitOnce.Do(func() {
 		selectCondDispatch = initSelectCondDispatch()
 	})
@@ -988,6 +1024,20 @@ func (e *Evaluator) evalSelectCondition(cond ConfigurableCondition) interface{} 
 	return e.config[cond.FunctionName]
 }
 
+// evalSoongConfigVar handles the soong_config_variable() select condition.
+// It looks up the variable in the evaluator's config or vars using the provided namespace and variable name.
+//
+// Parameters:
+//   - e: The Evaluator instance for config/variable lookups
+//   - cond: The ConfigurableCondition AST node containing namespace and variable arguments
+//
+// Returns:
+//   - interface{}: The value of the soong config variable, or nil if not found
+//
+// Edge cases:
+//   - Returns nil if less than 2 arguments are provided
+//   - Returns nil if namespace or variable name is empty
+//   - Checks config keys "namespace.variable" and "soong_config.namespace.variable"
 func evalSoongConfigVar(e *Evaluator, cond ConfigurableCondition) interface{} {
 	if len(cond.Args) < 2 {
 		return nil
@@ -1008,6 +1058,20 @@ func evalSoongConfigVar(e *Evaluator, cond ConfigurableCondition) interface{} {
 	return nil
 }
 
+// evalReleaseFlag handles the release_flag() select condition.
+// Looks up the release flag value in the evaluator's config using the key "release.<flag_name>".
+//
+// Parameters:
+//   - e: The Evaluator instance for config lookups
+//   - cond: The ConfigurableCondition AST node containing the flag name argument
+//
+// Returns:
+//   - interface{}: The release flag value, or nil if not found
+//
+// Edge cases:
+//   - Returns nil if less than 1 argument is provided
+//   - Returns nil if the flag name is empty
+//   - Config key format is "release.<flag_name>"
 func evalReleaseFlag(e *Evaluator, cond ConfigurableCondition) interface{} {
 	if len(cond.Args) < 1 {
 		return nil
@@ -1022,6 +1086,20 @@ func evalReleaseFlag(e *Evaluator, cond ConfigurableCondition) interface{} {
 	return nil
 }
 
+// evalVariantCond handles the variant() select condition.
+// Returns the build variant from config, optionally scoped to a specific variant name.
+//
+// Parameters:
+//   - e: The Evaluator instance for config lookups
+//   - cond: The ConfigurableCondition AST node (optional variant name argument)
+//
+// Returns:
+//   - interface{}: The variant value (e.g., "debug", "release"), or nil if not found
+//
+// Edge cases:
+//   - No arguments: returns config["variant"]
+//   - With argument: returns config["variant.<name>"]
+//   - Returns nil if the variant name is empty or not found
 func evalVariantCond(e *Evaluator, cond ConfigurableCondition) interface{} {
 	if len(cond.Args) == 0 {
 		return e.config["variant"]
@@ -1033,6 +1111,20 @@ func evalVariantCond(e *Evaluator, cond ConfigurableCondition) interface{} {
 	return nil
 }
 
+// evalProductVar handles the product_variable() select condition.
+// Returns the product-specific variable from config, optionally scoped to a variable name.
+//
+// Parameters:
+//   - e: The Evaluator instance for config lookups
+//   - cond: The ConfigurableCondition AST node (optional variable name argument)
+//
+// Returns:
+//   - interface{}: The product variable value, or nil if not found
+//
+// Edge cases:
+//   - No arguments: returns config["product"]
+//   - With argument: returns config["product.<name>"]
+//   - Returns nil if the variable name is empty or not found
 func evalProductVar(e *Evaluator, cond ConfigurableCondition) interface{} {
 	if len(cond.Args) == 0 {
 		return e.config["product"]
@@ -1044,18 +1136,54 @@ func evalProductVar(e *Evaluator, cond ConfigurableCondition) interface{} {
 	return nil
 }
 
+// evalTargetCond handles the target() select condition.
+// Returns the target platform from config (config["target"]).
+//
+// Parameters:
+//   - e: The Evaluator instance for config lookups
+//   - cond: The ConfigurableCondition AST node (arguments are ignored)
+//
+// Returns:
+//   - interface{}: The target platform value, or nil if not set
 func evalTargetCond(e *Evaluator, cond ConfigurableCondition) interface{} {
 	return e.config["target"]
 }
 
+// evalArchCond handles the arch() select condition.
+// Returns the current architecture from config (config["arch"]).
+//
+// Parameters:
+//   - e: The Evaluator instance for config lookups
+//   - cond: The ConfigurableCondition AST node (arguments are ignored)
+//
+// Returns:
+//   - interface{}: The architecture value (e.g., "arm64", "x86"), or nil if not set
 func evalArchCond(e *Evaluator, cond ConfigurableCondition) interface{} {
 	return e.config["arch"]
 }
 
+// evalHostCond handles the host() select condition.
+// Returns the host platform from config (config["host"]).
+//
+// Parameters:
+//   - e: The Evaluator instance for config lookups
+//   - cond: The ConfigurableCondition AST node (arguments are ignored)
+//
+// Returns:
+//   - interface{}: The host platform value, or nil if not set
 func evalHostCond(e *Evaluator, cond ConfigurableCondition) interface{} {
 	return e.config["host"]
 }
 
+// evalOSCond handles the os() select condition.
+// Returns the current operating system from config (config["os"]).
+//
+// Parameters:
+//   - e: The Evaluator instance for config lookups
+//   - cond: The ConfigurableCondition AST node (arguments are ignored)
+//
+// Returns:
+//   - interface{}: The OS value (e.g., "linux", "android"), or nil if not set
 func evalOSCond(e *Evaluator, cond ConfigurableCondition) interface{} {
 	return e.config["os"]
 }
@@ -1112,7 +1240,7 @@ func (e *Evaluator) evalExecScript(script *ExecScript) interface{} {
 	}
 
 	// Trim the output (remove trailing whitespace/newlines)
-	result := strings.TrimSpace(string(output))
+	result := strings.TrimSpace(string(output)) // Trim trailing whitespace and newlines from command output
 
 	// Try to parse as JSON with nesting depth limit to prevent stack overflow
 	var jsonValue interface{}
@@ -1124,7 +1252,21 @@ func (e *Evaluator) evalExecScript(script *ExecScript) interface{} {
 	return result
 }
 
-// safeJSONUnmarshal unmarshals JSON with a maximum nesting depth.
+// safeJSONUnmarshal unmarshals JSON data with a maximum nesting depth to prevent stack overflow.
+// It first validates the JSON nesting depth before performing the actual unmarshaling.
+//
+// Parameters:
+//   - data: The JSON byte slice to unmarshal
+//   - v: Pointer to store the unmarshaled value (supports all JSON types)
+//   - maxDepth: Maximum allowed nesting depth (e.g., 100)
+//
+// Returns:
+//   - error: Nil if successful, or error if depth exceeded or JSON is invalid
+//
+// Edge cases:
+//   - Nesting depth exceeding maxDepth returns an error without unmarshaling
+//   - Invalid JSON returns the underlying json.Unmarshal error
+//   - Empty data returns an error for invalid JSON input
 func safeJSONUnmarshal(data []byte, v *interface{}, maxDepth int) error {
 	depth := 0
 	for _, b := range data {

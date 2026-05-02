@@ -1,8 +1,24 @@
-// Package namespace provides namespace resolution for Blueprint modules.
-// It handles soong_namespace modules, module reference resolution with namespace
-// prefixes (e.9., "//namespace:module"), override modules, and soong_config_module_type
-// configuration. Namespaces control which modules are visible within different scopes
-// and enable modular build configurations.
+// Package namespace provides namespace resolution for Blueprint modules,
+// handling soong_namespace definitions, module reference resolution with namespace
+// prefixes (e.g., "//namespace:module"), override module application, and
+// soong_config_module_type processing.
+//
+// This package enables modular build configurations by controlling module visibility
+// across different namespaces. Key features include:
+//   - Namespace metadata extraction from soong_namespace modules
+//   - Fully qualified module reference resolution (//ns:module)
+//   - Override module application to modify base module properties
+//   - Custom module type registration via soong_config_module_type
+//
+// Namespaces act as containers for modules: modules within the same namespace
+// can reference each other directly, while cross-namespace references require
+// the //namespace:module prefix notation.
+//
+// The package provides the following core functions:
+//   - BuildMap: Constructs namespace metadata map from parsed modules
+//   - ResolveModuleRef: Resolves namespace-prefixed module references
+//   - ApplyOverrides: Applies override modules to their base modules
+//   - ApplySoongConfigModuleTypes: Processes custom module type definitions
 package namespace
 
 import (
@@ -69,28 +85,31 @@ type Info struct {
 //   - Non-list imports values are ignored
 //   - Non-string values within the imports list are ignored
 func BuildMap(modules map[string]*parser.Module, getStringProp func(*parser.Module, string) string) map[string]*Info {
-	result := make(map[string]*Info)
-	for _, mod := range modules {
+	result := make(map[string]*Info) // Initialize empty namespace map
+	for _, mod := range modules {    // Iterate through all parsed modules
 		if mod.Type != "soong_namespace" || mod.Map == nil {
-			continue
+			continue // Skip non-soong_namespace modules or those without properties
 		}
-		name := getStringProp(mod, "name")
+		name := getStringProp(mod, "name") // Extract namespace name from module properties
 		if name == "" {
-			continue
+			continue // Skip namespaces with empty name
 		}
-		ns := &Info{}
-		for _, prop := range mod.Map.Properties {
+		ns := &Info{}                             // Initialize new namespace info struct
+		for _, prop := range mod.Map.Properties { // Iterate through module properties to find imports
 			if prop.Name == "imports" {
+				// Check for imports property
 				if l, ok := prop.Value.(*parser.List); ok {
-					for _, v := range l.Values {
+					// Ensure imports is a list type
+					for _, v := range l.Values { // Iterate through import list values
 						if s, ok := v.(*parser.String); ok {
-							ns.Imports = append(ns.Imports, s.Value)
+							// Collect only string import values
+							ns.Imports = append(ns.Imports, s.Value) // Add valid import to namespace
 						}
 					}
 				}
 			}
 		}
-		result[name] = ns
+		result[name] = ns // Store namespace info in result map
 	}
 	return result
 }
@@ -136,18 +155,18 @@ func BuildMap(modules map[string]*parser.Module, getStringProp func(*parser.Modu
 //   - References with non-existent namespace return original reference
 //   - Empty references return empty string
 func ResolveModuleRef(ref string, namespaces map[string]*Info) string {
-	ref = strings.TrimPrefix(ref, ":")
-	if strings.HasPrefix(ref, "//") {
-		sepIdx := strings.Index(ref, ":")
-		if sepIdx >= 0 {
-			nsName := ref[2:sepIdx]
-			modName := ref[sepIdx+1:]
-			if _, ok := namespaces[nsName]; ok {
-				return modName
+	ref = strings.TrimPrefix(ref, ":") // Strip leading colon for shorthand syntax
+	if strings.HasPrefix(ref, "//") {  // Check for fully qualified namespace reference
+		sepIdx := strings.Index(ref, ":") // Find ":" separator between namespace and module
+		if sepIdx >= 0 {                  // Ensure separator exists
+			nsName := ref[2:sepIdx]              // Extract namespace name from reference
+			modName := ref[sepIdx+1:]            // Extract module name from reference
+			if _, ok := namespaces[nsName]; ok { // Verify namespace exists in map
+				return modName // Return resolved module name
 			}
 		}
 	}
-	return ref
+	return ref // Return original reference if resolution failed
 }
 
 // ApplyOverrides applies override modules to their base modules in the module map.
@@ -188,18 +207,18 @@ func ResolveModuleRef(ref string, namespaces map[string]*Info) string {
 //   - Modules without Map properties are skipped
 //   - Override with nil Map is skipped
 func ApplyOverrides(modules map[string]*parser.Module) {
-	for name, ovr := range modules {
+	for name, ovr := range modules { // Iterate through all modules to find overrides
 		if !ovr.Override {
-			continue
+			continue // Skip non-override modules
 		}
-		base, ok := modules[name]
+		base, ok := modules[name] // Look up base module by name
 		if !ok || base == ovr {
-			continue
+			continue // Skip non-existent base or self-reference
 		}
-		if base.Map != nil && ovr.Map != nil {
-			variant.MergeMapProps(base, ovr.Map)
+		if base.Map != nil && ovr.Map != nil { // Ensure both modules have properties to merge
+			variant.MergeMapProps(base, ovr.Map) // Merge override properties into base
 		}
-		modules[name] = base
+		modules[name] = base // Update module map with merged base
 	}
 }
 
@@ -244,32 +263,32 @@ func ApplyOverrides(modules map[string]*parser.Module) {
 //   - Non-String property values in vars are ignored
 //   - Already registered types are not re-registered (Has check)
 func ApplySoongConfigModuleTypes(modules map[string]*parser.Module, getStringProp func(*parser.Module, string) string, eval *parser.Evaluator) {
-	for _, ct := range modules {
+	for _, ct := range modules { // Iterate through modules to find config types
 		if ct.Type != "soong_config_module_type" {
-			continue
+			continue // Skip non-config-module-type modules
 		}
-		baseType := getStringProp(ct, "module_type")
-		ns := getStringProp(ct, "config_namespace")
-		typeName := getStringProp(ct, "name")
+		baseType := getStringProp(ct, "module_type") // Extract base module type
+		ns := getStringProp(ct, "config_namespace")  // Extract config namespace
+		typeName := getStringProp(ct, "name")        // Extract custom type name
 		if baseType == "" || typeName == "" {
-			continue
+			continue // Skip if required properties missing
 		}
-		if ct.Map != nil {
-			for _, prop := range ct.Map.Properties {
-				if prop.Name == "vars" {
-					if mp, ok := prop.Value.(*parser.Map); ok {
-						for _, p := range mp.Properties {
-							if s, ok := p.Value.(*parser.String); ok {
-								key := fmt.Sprintf("%s.%s", ns, p.Name)
-								eval.SetConfig(key, s.Value)
+		if ct.Map != nil { // Check if module has properties
+			for _, prop := range ct.Map.Properties { // Iterate through properties to find vars
+				if prop.Name == "vars" { // Check for vars property
+					if mp, ok := prop.Value.(*parser.Map); ok { // Ensure vars is a map type
+						for _, p := range mp.Properties { // Iterate through vars map entries
+							if s, ok := p.Value.(*parser.String); ok { // Collect string var values
+								key := fmt.Sprintf("%s.%s", ns, p.Name) // Build config key (namespace.var)
+								eval.SetConfig(key, s.Value)            // Set config value in evaluator
 							}
 						}
 					}
 				}
 			}
 		}
-		if !module.Has(typeName) {
-			module.RegisterAlias(typeName, baseType)
+		if !module.Has(typeName) { // Register alias only if not already registered
+			module.RegisterAlias(typeName, baseType) // Register custom type alias
 		}
 	}
 }

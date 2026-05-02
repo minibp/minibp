@@ -156,7 +156,7 @@ func (m *Module) MarshalJSON() ([]byte, error) {
 //   - Boolean field false is correctly deserialized
 func (m *Module) UnmarshalJSON(data []byte) error {
 	var aux ModuleJSON
-	if err := json.Unmarshal(data, &aux); err != nil {
+	if err := json.Unmarshal(data, &aux); err != nil { // Unmarshal to intermediate struct
 		return err
 	}
 	m.Type = aux.Type
@@ -241,7 +241,7 @@ func (m *Map) MarshalJSON() ([]byte, error) {
 //   - Properties is null results in m.Properties being nil
 func (m *Map) UnmarshalJSON(data []byte) error {
 	var aux MapJSON
-	if err := json.Unmarshal(data, &aux); err != nil {
+	if err := json.Unmarshal(data, &aux); err != nil { // Unmarshal to intermediate struct
 		return err
 	}
 	m.Properties = aux.Properties
@@ -333,14 +333,14 @@ func (p *Property) UnmarshalJSON(data []byte) error {
 		Value    json.RawMessage `json:"value"`
 		ColonPos string          `json:"colon_pos"`
 	}{}
-	if err := json.Unmarshal(data, aux); err != nil {
+	if err := json.Unmarshal(data, aux); err != nil { // Unmarshal to intermediate struct
 		return err
 	}
 	p.Name = aux.Name
 	p.NamePos = stringToPos(aux.NamePos)
 	p.ColonPos = stringToPos(aux.ColonPos)
 	expr, err := unmarshalExpression(aux.Value)
-	if err != nil {
+	if err != nil { // Propagate error from expression deserialization
 		return err
 	}
 	p.Value = expr
@@ -418,7 +418,7 @@ func (s *String) UnmarshalJSON(data []byte) error {
 		Value      string `json:"value"`
 		LiteralPos string `json:"literal_pos"`
 	}{}
-	if err := json.Unmarshal(data, aux); err != nil {
+	if err := json.Unmarshal(data, aux); err != nil { // Unmarshal to intermediate struct
 		return err
 	}
 	s.Value = aux.Value
@@ -498,7 +498,7 @@ func (i *Int64) UnmarshalJSON(data []byte) error {
 		Value      int64  `json:"value"`
 		LiteralPos string `json:"literal_pos"`
 	}{}
-	if err := json.Unmarshal(data, aux); err != nil {
+	if err := json.Unmarshal(data, aux); err != nil { // Unmarshal to intermediate struct
 		return err
 	}
 	i.Value = aux.Value
@@ -577,7 +577,7 @@ func (b *Bool) UnmarshalJSON(data []byte) error {
 		Value      bool   `json:"value"`
 		LiteralPos string `json:"literal_pos"`
 	}{}
-	if err := json.Unmarshal(data, aux); err != nil {
+	if err := json.Unmarshal(data, aux); err != nil { // Unmarshal to intermediate struct
 		return err
 	}
 	b.Value = aux.Value
@@ -669,7 +669,7 @@ func (l *List) UnmarshalJSON(data []byte) error {
 		LBracePos string            `json:"lbrace_pos"`
 		RBracePos string            `json:"rbrace_pos"`
 	}{}
-	if err := json.Unmarshal(data, aux); err != nil {
+	if err := json.Unmarshal(data, aux); err != nil { // Unmarshal to intermediate struct
 		return err
 	}
 	l.LBracePos = stringToPos(aux.LBracePos)
@@ -679,8 +679,7 @@ func (l *List) UnmarshalJSON(data []byte) error {
 	l.Values = make([]Expression, len(aux.Values))
 	for i, raw := range aux.Values {
 		expr, err := unmarshalExpression(raw)
-		if err != nil {
-			// Propagate parse error immediately; partial list is invalid.
+		if err != nil { // Propagate parse error; partial list is invalid
 			return err
 		}
 		l.Values[i] = expr
@@ -759,7 +758,7 @@ func (v *Variable) UnmarshalJSON(data []byte) error {
 		Name    string `json:"name"`
 		NamePos string `json:"name_pos"`
 	}{}
-	if err := json.Unmarshal(data, aux); err != nil {
+	if err := json.Unmarshal(data, aux); err != nil { // Unmarshal to intermediate struct
 		return err
 	}
 	v.Name = aux.Name
@@ -854,7 +853,7 @@ func (a *Assignment) UnmarshalJSON(data []byte) error {
 		Assigner  string          `json:"assigner"`
 		Value     json.RawMessage `json:"value"`
 	}{}
-	if err := json.Unmarshal(data, aux); err != nil {
+	if err := json.Unmarshal(data, aux); err != nil { // Unmarshal to intermediate struct
 		return err
 	}
 	a.Name = aux.Name
@@ -862,7 +861,7 @@ func (a *Assignment) UnmarshalJSON(data []byte) error {
 	a.EqualsPos = stringToPos(aux.EqualsPos)
 	a.Assigner = aux.Assigner
 	expr, err := unmarshalExpression(aux.Value)
-	if err != nil {
+	if err != nil { // Propagate error from expression deserialization
 		return err
 	}
 	a.Value = expr
@@ -958,14 +957,14 @@ func (o *Operator) UnmarshalJSON(data []byte) error {
 		Operator    rune               `json:"operator"`
 		OperatorPos string             `json:"operator_pos"`
 	}{}
-	if err := json.Unmarshal(data, aux); err != nil {
+	if err := json.Unmarshal(data, aux); err != nil { // Unmarshal to intermediate struct
 		return err
 	}
 	o.Operator = aux.Operator
 	o.OperatorPos = stringToPos(aux.OperatorPos)
 	for i, raw := range aux.Args {
 		expr, err := unmarshalExpression(raw)
-		if err != nil {
+		if err != nil { // Propagate error; partial operator is invalid
 			return err
 		}
 		o.Args[i] = expr
@@ -1059,7 +1058,7 @@ func (s *Select) UnmarshalJSON(data []byte) error {
 		RBracePos  string                  `json:"rbrace_pos"`
 		Cases      []SelectCase            `json:"cases"`
 	}{}
-	if err := json.Unmarshal(data, aux); err != nil {
+	if err := json.Unmarshal(data, aux); err != nil { // Unmarshal to intermediate struct
 		return err
 	}
 	s.KeywordPos = stringToPos(aux.KeywordPos)
@@ -1150,7 +1149,7 @@ func (c *ConfigurableCondition) UnmarshalJSON(data []byte) error {
 		FunctionName string            `json:"function_name"`
 		Args         []json.RawMessage `json:"args"`
 	}{}
-	if err := json.Unmarshal(data, aux); err != nil {
+	if err := json.Unmarshal(data, aux); err != nil { // Unmarshal to intermediate struct
 		return err
 	}
 	c.Position = stringToPos(aux.Position)
@@ -1160,8 +1159,7 @@ func (c *ConfigurableCondition) UnmarshalJSON(data []byte) error {
 	c.Args = make([]Expression, len(aux.Args))
 	for i, raw := range aux.Args {
 		expr, err := unmarshalExpression(raw)
-		if err != nil {
-			// Propagate error; partial condition is invalid.
+		if err != nil { // Propagate error; partial condition is invalid
 			return err
 		}
 		c.Args[i] = expr
@@ -1245,13 +1243,13 @@ func (s *SelectCase) UnmarshalJSON(data []byte) error {
 		ColonPos string          `json:"colon_pos"`
 		Value    json.RawMessage `json:"value"`
 	}{}
-	if err := json.Unmarshal(data, aux); err != nil {
+	if err := json.Unmarshal(data, aux); err != nil { // Unmarshal to intermediate struct
 		return err
 	}
 	s.Patterns = aux.Patterns
 	s.ColonPos = stringToPos(aux.ColonPos)
 	expr, err := unmarshalExpression(aux.Value)
-	if err != nil {
+	if err != nil { // Propagate error from expression deserialization
 		return err
 	}
 	s.Value = expr
@@ -1335,13 +1333,13 @@ func (s *SelectPattern) UnmarshalJSON(data []byte) error {
 		IsAny   bool            `json:"is_any"`
 		Binding string          `json:"binding,omitempty"`
 	}{}
-	if err := json.Unmarshal(data, aux); err != nil {
+	if err := json.Unmarshal(data, aux); err != nil { // Unmarshal to intermediate struct
 		return err
 	}
 	s.IsAny = aux.IsAny
 	s.Binding = aux.Binding
 	expr, err := unmarshalExpression(aux.Value)
-	if err != nil {
+	if err != nil { // Propagate error from expression deserialization
 		return err
 	}
 	s.Value = expr
@@ -1415,7 +1413,7 @@ func (u *Unset) UnmarshalJSON(data []byte) error {
 	aux := &struct {
 		KeywordPos string `json:"keyword_pos"`
 	}{}
-	if err := json.Unmarshal(data, aux); err != nil {
+	if err := json.Unmarshal(data, aux); err != nil { // Unmarshal to intermediate struct
 		return err
 	}
 	u.KeywordPos = stringToPos(aux.KeywordPos)
@@ -1496,16 +1494,16 @@ func (e *ExecScript) UnmarshalJSON(data []byte) error {
 		Command    json.RawMessage   `json:"command"`
 		Args       []json.RawMessage `json:"args"`
 	}{}
-	if err := json.Unmarshal(data, aux); err != nil {
+	if err := json.Unmarshal(data, aux); err != nil { // Unmarshal to intermediate struct
 		return err
 	}
 	e.KeywordPos = stringToPos(aux.KeywordPos)
 
 	// Deserialize command expression if present.
 	// Command is optional in JSON (omitempty not used, but nil handled here).
-	if len(aux.Command) > 0 {
+	if len(aux.Command) > 0 { // Command present in JSON
 		cmd, err := unmarshalExpression(aux.Command)
-		if err != nil {
+		if err != nil { // Propagate error from command deserialization
 			return err
 		}
 		e.Command = cmd
@@ -1513,11 +1511,11 @@ func (e *ExecScript) UnmarshalJSON(data []byte) error {
 
 	// Deserialize args slice if present.
 	// Use append to build slice since Args may be nil and we want to preserve that.
-	if len(aux.Args) > 0 {
+	if len(aux.Args) > 0 { // Args present in JSON
 		e.Args = make([]Expression, 0, len(aux.Args))
 		for _, raw := range aux.Args {
 			arg, err := unmarshalExpression(raw)
-			if err != nil {
+			if err != nil { // Propagate error; partial args invalid
 				return err
 			}
 			e.Args = append(e.Args, arg)
@@ -1600,7 +1598,7 @@ func (f *File) UnmarshalJSON(data []byte) error {
 		Name string            `json:"name"`
 		Defs []json.RawMessage `json:"defs"`
 	}{}
-	if err := json.Unmarshal(data, aux); err != nil {
+	if err := json.Unmarshal(data, aux); err != nil { // Unmarshal to intermediate struct
 		return err
 	}
 	f.Name = aux.Name
@@ -1610,8 +1608,7 @@ func (f *File) UnmarshalJSON(data []byte) error {
 	f.Defs = make([]Definition, len(aux.Defs))
 	for i, raw := range aux.Defs {
 		def, err := unmarshalDefinition(raw)
-		if err != nil {
-			// Propagate error immediately; partial file is invalid.
+		if err != nil { // Propagate error; partial file is invalid
 			return err
 		}
 		f.Defs[i] = def
@@ -1658,7 +1655,7 @@ func (f *File) UnmarshalJSON(data []byte) error {
 func unmarshalExpression(raw json.RawMessage) (Expression, error) {
 	// Early return for empty input to avoid unnecessary JSON parsing.
 	// Empty raw bytes typically indicate a null or missing value in the parent struct.
-	if len(raw) == 0 {
+	if len(raw) == 0 { // Empty input; return nil to indicate missing value
 		return nil, nil
 	}
 
@@ -1668,7 +1665,7 @@ func unmarshalExpression(raw json.RawMessage) (Expression, error) {
 	aux := &struct {
 		Type string `json:"type"`
 	}{}
-	if err := json.Unmarshal(raw, aux); err != nil {
+	if err := json.Unmarshal(raw, aux); err != nil { // Extract "type" field to determine expression type
 		return nil, err
 	}
 
@@ -1678,55 +1675,55 @@ func unmarshalExpression(raw json.RawMessage) (Expression, error) {
 	switch aux.Type {
 	case "string":
 		var expr String
-		if err := json.Unmarshal(raw, &expr); err != nil {
+		if err := json.Unmarshal(raw, &expr); err != nil { // Deserialize to String expression
 			return nil, err
 		}
 		return &expr, nil
 	case "int64":
 		var expr Int64
-		if err := json.Unmarshal(raw, &expr); err != nil {
+		if err := json.Unmarshal(raw, &expr); err != nil { // Deserialize to Int64 expression
 			return nil, err
 		}
 		return &expr, nil
 	case "bool":
 		var expr Bool
-		if err := json.Unmarshal(raw, &expr); err != nil {
+		if err := json.Unmarshal(raw, &expr); err != nil { // Deserialize to Bool expression
 			return nil, err
 		}
 		return &expr, nil
 	case "list":
 		var expr List
-		if err := json.Unmarshal(raw, &expr); err != nil {
+		if err := json.Unmarshal(raw, &expr); err != nil { // Deserialize to List expression
 			return nil, err
 		}
 		return &expr, nil
 	case "variable":
 		var expr Variable
-		if err := json.Unmarshal(raw, &expr); err != nil {
+		if err := json.Unmarshal(raw, &expr); err != nil { // Deserialize to Variable expression
 			return nil, err
 		}
 		return &expr, nil
 	case "operator":
 		var expr Operator
-		if err := json.Unmarshal(raw, &expr); err != nil {
+		if err := json.Unmarshal(raw, &expr); err != nil { // Deserialize to Operator expression
 			return nil, err
 		}
 		return &expr, nil
 	case "select":
 		var expr Select
-		if err := json.Unmarshal(raw, &expr); err != nil {
+		if err := json.Unmarshal(raw, &expr); err != nil { // Deserialize to Select expression
 			return nil, err
 		}
 		return &expr, nil
 	case "unset":
 		var expr Unset
-		if err := json.Unmarshal(raw, &expr); err != nil {
+		if err := json.Unmarshal(raw, &expr); err != nil { // Deserialize to Unset expression
 			return nil, err
 		}
 		return &expr, nil
 	case "exec_script":
 		var expr ExecScript
-		if err := json.Unmarshal(raw, &expr); err != nil {
+		if err := json.Unmarshal(raw, &expr); err != nil { // Deserialize to ExecScript expression
 			return nil, err
 		}
 		return &expr, nil
@@ -1776,7 +1773,7 @@ func unmarshalExpression(raw json.RawMessage) (Expression, error) {
 //   - Module and Assignment's UnmarshalJSON methods may return their own errors
 func unmarshalDefinition(raw json.RawMessage) (Definition, error) {
 	// Early return for empty input to avoid unnecessary JSON parsing.
-	if len(raw) == 0 {
+	if len(raw) == 0 { // Empty input; return nil to indicate missing value
 		return nil, nil
 	}
 
@@ -1786,7 +1783,7 @@ func unmarshalDefinition(raw json.RawMessage) (Definition, error) {
 	aux := &struct {
 		Type string `json:"type"`
 	}{}
-	if err := json.Unmarshal(raw, aux); err != nil {
+	if err := json.Unmarshal(raw, aux); err != nil { // Extract "type" field to determine definition type
 		return nil, err
 	}
 
@@ -1796,7 +1793,7 @@ func unmarshalDefinition(raw json.RawMessage) (Definition, error) {
 	switch aux.Type {
 	case "assignment":
 		var def Assignment
-		if err := json.Unmarshal(raw, &def); err != nil {
+		if err := json.Unmarshal(raw, &def); err != nil { // Deserialize to Assignment definition
 			return nil, err
 		}
 		return &def, nil
@@ -1804,7 +1801,7 @@ func unmarshalDefinition(raw json.RawMessage) (Definition, error) {
 		// Default to Module: simplifies JSON format for the common case.
 		// Most Blueprint definitions are modules, so omitting "type" reduces noise.
 		var def Module
-		if err := json.Unmarshal(raw, &def); err != nil {
+		if err := json.Unmarshal(raw, &def); err != nil { // Deserialize to Module definition
 			return nil, err
 		}
 		return &def, nil
@@ -1846,7 +1843,7 @@ func unmarshalDefinition(raw json.RawMessage) (Definition, error) {
 func posToString(pos scanner.Position) string {
 	// Check for zero-value position to avoid serializing meaningless "::0:0".
 	// This happens when position info was not set during parsing.
-	if pos.Filename == "" && pos.Line == 0 && pos.Column == 0 {
+	if pos.Filename == "" && pos.Line == 0 && pos.Column == 0 { // Zero-value position; return empty string
 		return ""
 	}
 	// Build "file:line:column" format string using strconv.Itoa for integer conversion.
@@ -1894,14 +1891,14 @@ func posToString(pos scanner.Position) string {
 //	// pos = scanner.Position{}
 func stringToPos(s string) scanner.Position {
 	// Empty string indicates missing or zero-value position; return zero-value.
-	if s == "" {
+	if s == "" { // Empty string; return zero-value position
 		return scanner.Position{}
 	}
 	// Split on ":" to extract filename, line, and column.
 	// Note: Filename may contain ":" (e.g., absolute Windows paths), but we only
 	// split on the first two ":" occurrences (parts[0], parts[1], parts[2]).
 	parts := strings.Split(s, ":")
-	if len(parts) >= 3 {
+	if len(parts) >= 3 { // Valid format with filename, line, and column
 		// Parse line and column numbers; ignore errors (invalid numbers become 0).
 		// This provides graceful degradation for malformed position strings.
 		line, _ := strconv.Atoi(parts[1])

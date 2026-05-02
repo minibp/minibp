@@ -56,6 +56,11 @@ import (
 //   - List properties (e.g., cflags, srcs) are combined, not replaced
 type defaults struct{}
 
+// Name returns the module type name for defaults modules.
+// This is used by the build system to identify and register the defaults rule type.
+//
+// Returns the string "defaults" which is the rule type identifier.
+// Returns a constant string value (no edge cases).
 func (r *defaults) Name() string { return "defaults" }
 
 // isDefaultsModuleType checks if a module type is a defaults variant.
@@ -76,22 +81,61 @@ func isDefaultsModuleType(typeName string) bool {
 	}
 }
 
+// NinjaRule returns an empty string because defaults modules don't produce build rules.
+// Defaults modules are property containers that are inherited by other modules
+// during evaluation, not build targets that generate ninja rules.
+//
+// Parameters:
+//   - ctx: The rule render context (unused)
+//
+// Returns an empty string since no ninja rule is needed.
+// Returns a constant empty string (no edge cases).
 func (r *defaults) NinjaRule(ctx RuleRenderContext) string {
 	// Defaults modules don't produce any ninja rules.
 	// They only serve as property containers for inheritance.
 	return ""
 }
 
+// Outputs returns nil because defaults modules don't produce build outputs.
+// Defaults modules are meta-modules that only provide properties for inheritance.
+// They do not compile, link, or generate any files.
+//
+// Parameters:
+//   - m: The parser.Module (unused)
+//   - ctx: The rule render context (unused)
+//
+// Returns nil since no output files are generated.
+// Returns nil (no edge cases).
 func (r *defaults) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 	// Defaults modules don't produce any outputs.
 	return nil
 }
 
+// NinjaEdge returns an empty string because defaults modules don't have build edges.
+// Build edges define actual build actions; defaults modules only exist to be
+// inherited by other modules during property evaluation phase.
+//
+// Parameters:
+//   - m: The parser.Module (unused)
+//   - ctx: The rule render context (unused)
+//
+// Returns an empty string since no build edges are needed.
+// Returns a constant empty string (no edge cases).
 func (r *defaults) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 	// Defaults modules don't produce any build edges.
 	return ""
 }
 
+// Desc returns an empty description since defaults are meta-modules only.
+// Defaults modules don't perform build actions, so no description is needed
+// for ninja build output.
+//
+// Parameters:
+//   - m: The parser.Module (unused)
+//   - srcFile: The source file path (unused)
+//
+// Returns an empty string since no build action description is needed.
+// Returns a constant empty string (no edge cases).
 func (r *defaults) Desc(m *parser.Module, srcFile string) string {
 	// No description needed for property-only modules.
 	return ""
@@ -106,24 +150,64 @@ func (r *defaults) Desc(m *parser.Module, srcFile string) string {
 // This allows language-specific compiler flags and settings to be centralized.
 //
 // Fields:
-//   - typeName: The module type name (e.g., "cc_defaults", "java_defaults")
+//   - typeName: The module type name (e.g., "cc_defaults", "java_defaults", "go_defaults")
+//     This determines which language modules will inherit these properties
 type defaultsModule struct {
 	typeName string
 }
 
+// Name returns the language-specific defaults module type name.
+// Returns the typeName field which identifies the language this defaults applies to.
+//
+// Returns the module type name string (e.g., "cc_defaults", "java_defaults").
+// Returns the value of r.typeName field (no edge cases).
 func (r *defaultsModule) Name() string { return r.typeName }
 
 // NinjaRule returns an empty string because defaults modules don't produce build rules.
 // They only serve as property containers for inheritance by other modules.
+// Language-specific defaults (cc_defaults, etc.) are evaluated during property
+// merging, not during ninja rule generation.
+//
+// Parameters:
+//   - ctx: The rule render context (unused)
+//
+// Returns an empty string since no ninja rule is needed.
+// Returns a constant empty string (no edge cases).
 func (r *defaultsModule) NinjaRule(ctx RuleRenderContext) string { return "" }
 
 // Outputs returns nil because defaults modules don't produce outputs.
+// Language-specific defaults modules are property containers only.
+// They do not generate any build artifacts or output files.
+//
+// Parameters:
+//   - m: The parser.Module (unused)
+//   - ctx: The rule render context (unused)
+//
+// Returns nil since no output files are generated.
+// Returns nil (no edge cases).
 func (r *defaultsModule) Outputs(m *parser.Module, ctx RuleRenderContext) []string { return nil }
 
 // NinjaEdge returns an empty string because defaults modules don't have build edges.
+// Language-specific defaults are evaluated during property inheritance phase,
+// not during ninja build edge generation.
+//
+// Parameters:
+//   - m: The parser.Module (unused)
+//   - ctx: The rule render context (unused)
+//
+// Returns an empty string since no build edges are needed.
+// Returns a constant empty string (no edge cases).
 func (r *defaultsModule) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string { return "" }
 
 // Desc returns an empty description since these are meta-modules only.
+// Language-specific defaults don't perform build actions.
+//
+// Parameters:
+//   - m: The parser.Module (unused)
+//   - srcFile: The source file path (unused)
+//
+// Returns an empty string since no build action description is needed.
+// Returns a constant empty string (no edge cases).
 func (r *defaultsModule) Desc(m *parser.Module, srcFile string) string { return "" }
 
 // packageModule sets default properties for all modules within a package.
@@ -146,23 +230,66 @@ func (r *defaultsModule) Desc(m *parser.Module, srcFile string) string { return 
 //   - Nested packages don't automatically inherit from parent packages
 type packageModule struct{}
 
+// Name returns the module type name for package modules.
+// This is used by the build system to identify and register the package rule type.
+//
+// Returns the string "package" which is the rule type identifier.
+// Returns a constant string value (no edge cases).
 func (r *packageModule) Name() string { return "package" }
 
+// NinjaRule returns an empty string because package modules don't produce build rules.
+// Package modules set default properties for modules in a directory,
+// but do not generate any ninja build rules themselves.
+//
+// Parameters:
+//   - ctx: The rule render context (unused)
+//
+// Returns an empty string since no ninja rule is needed.
+// Returns a constant empty string (no edge cases).
 func (r *packageModule) NinjaRule(ctx RuleRenderContext) string {
 	// Package modules don't produce any ninja rules.
 	return ""
 }
 
+// Outputs returns nil because package modules don't produce outputs.
+// Package modules apply properties to other modules in the same directory,
+// but do not generate any output files themselves.
+//
+// Parameters:
+//   - m: The parser.Module (unused)
+//   - ctx: The rule render context (unused)
+//
+// Returns nil since no output files are generated.
+// Returns nil (no edge cases).
 func (r *packageModule) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 	// Package modules don't produce any outputs.
 	return nil
 }
 
+// NinjaEdge returns an empty string because package modules don't have build edges.
+// Package modules are property containers that affect modules in the same directory
+// during property evaluation, not during ninja build edge generation.
+//
+// Parameters:
+//   - m: The parser.Module (unused)
+//   - ctx: The rule render context (unused)
+//
+// Returns an empty string since no build edges are needed.
+// Returns a constant empty string (no edge cases).
 func (r *packageModule) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 	// Package modules don't produce any build edges.
 	return ""
 }
 
+// Desc returns an empty description since package modules are meta-modules only.
+// Package modules don't perform build actions, so no description is needed.
+//
+// Parameters:
+//   - m: The parser.Module (unused)
+//   - srcFile: The source file path (unused)
+//
+// Returns an empty string since no build action description is needed.
+// Returns a constant empty string (no edge cases).
 func (r *packageModule) Desc(m *parser.Module, srcFile string) string {
 	return ""
 }
@@ -186,23 +313,66 @@ func (r *packageModule) Desc(m *parser.Module, srcFile string) string {
 //   - Cycles in namespace references are not allowed
 type soongNamespace struct{}
 
+// Name returns the module type name for soong namespace modules.
+// This is used by the build system to identify and register the soong_namespace rule type.
+//
+// Returns the string "soong_namespace" which is the rule type identifier.
+// Returns a constant string value (no edge cases).
 func (r *soongNamespace) Name() string { return "soong_namespace" }
 
+// NinjaRule returns an empty string because namespace modules don't produce build rules.
+// Namespace modules define scoping boundaries for module names,
+// but do not generate any ninja build rules.
+//
+// Parameters:
+//   - ctx: The rule render context (unused)
+//
+// Returns an empty string since no ninja rule is needed.
+// Returns a constant empty string (no edge cases).
 func (r *soongNamespace) NinjaRule(ctx RuleRenderContext) string {
 	// Namespace modules don't produce any ninja rules.
 	return ""
 }
 
+// Outputs returns nil because namespace modules don't produce outputs.
+// Namespace modules define logical boundaries for module name resolution,
+// but do not generate any output files.
+//
+// Parameters:
+//   - m: The parser.Module (unused)
+//   - ctx: The rule render context (unused)
+//
+// Returns nil since no output files are generated.
+// Returns nil (no edge cases).
 func (r *soongNamespace) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 	// Namespace modules don't produce any outputs.
 	return nil
 }
 
+// NinjaEdge returns an empty string because namespace modules don't have build edges.
+// Namespace modules are scoping constructs that affect module name resolution,
+// not build targets that generate ninja edges.
+//
+// Parameters:
+//   - m: The parser.Module (unused)
+//   - ctx: The rule render context (unused)
+//
+// Returns an empty string since no build edges are needed.
+// Returns a constant empty string (no edge cases).
 func (r *soongNamespace) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 	// Namespace modules don't produce any build edges.
 	return ""
 }
 
+// Desc returns an empty description since namespace modules are meta-modules only.
+// Namespace modules don't perform build actions, so no description is needed.
+//
+// Parameters:
+//   - m: The parser.Module (unused)
+//   - srcFile: The source file path (unused)
+//
+// Returns an empty string since no build action description is needed.
+// Returns a constant empty string (no edge cases).
 func (r *soongNamespace) Desc(m *parser.Module, srcFile string) string {
 	return ""
 }
@@ -228,42 +398,92 @@ func (r *soongNamespace) Desc(m *parser.Module, srcFile string) string {
 //   - Module names starting with ":" are trimmed for ninja compatibility
 type phonyRule struct{}
 
+// Name returns the module type name for phony targets.
+// This is used by the build system to identify and register the phony rule type.
+//
+// Returns the string "phony" which is the rule type identifier.
+// Returns a constant string value (no edge cases).
 func (r *phonyRule) Name() string { return "phony" }
 
+// NinjaRule returns an empty string because phony uses ninja's built-in rule.
+// Ninja has a built-in "phony" rule that creates dummy targets.
+// No custom rule definition is needed.
+//
+// Parameters:
+//   - ctx: The rule render context (unused)
+//
+// Returns an empty string since ninja's built-in phony rule is used.
+// Returns a constant empty string (no edge cases).
 func (r *phonyRule) NinjaRule(ctx RuleRenderContext) string {
 	// Uses ninja's built-in phony rule, no custom rule needed.
 	return ""
 }
 
+// Outputs returns nil because phony targets don't produce real output files.
+// Phony targets are virtual aliases that group dependencies without generating files.
+//
+// Parameters:
+//   - m: The parser.Module (unused)
+//   - ctx: The rule render context (unused)
+//
+// Returns nil since no output files are generated.
+// Returns nil (no edge cases).
 func (r *phonyRule) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 	// Phony targets don't produce real output files.
 	return nil
 }
 
+// NinjaEdge generates ninja build edges for phony targets.
+// Creates a phony target that depends on either explicit dependencies (deps property)
+// or source files (srcs property). The phony target serves as a virtual alias
+// that groups multiple build outputs under a single name.
+//
+// Parameters:
+//   - m: The parser.Module containing name, deps, and srcs properties
+//   - ctx: The rule render context (unused)
+//
+// Returns a ninja build edge string for the phony target.
+// Returns empty string if the module has no name.
+//
+// Edge cases:
+//   - Empty name returns empty string (no target to create)
+//   - Module references with ":" prefix are trimmed for ninja compatibility
+//   - Explicit deps take priority over srcs
+//   - If neither deps nor srcs exist, creates an empty phony target
+//   - Output path is escaped for ninja compatibility
 func (r *phonyRule) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 	name := getName(m)
 	deps := GetListProp(m, "deps")
-	if name == "" {
+	if name == "" { // Module must have a name to create phony target
 		return ""
 	}
 	// Convert module references (remove leading ":" prefix).
 	var depNames []string
 	for _, dep := range deps {
-		depNames = append(depNames, strings.TrimPrefix(dep, ":"))
+		depNames = append(depNames, strings.TrimPrefix(dep, ":")) // Trim ":" prefix from module refs
 	}
 	// Prefer explicit dependencies over source files.
-	if len(depNames) > 0 {
+	if len(depNames) > 0 { // Use explicit deps if specified
 		return fmt.Sprintf("build %s: phony %s\n", ninjaEscapePath(name), strings.Join(depNames, " "))
 	}
 	// Fall back to source files if no deps specified.
 	srcs := getSrcs(m)
-	if len(srcs) > 0 {
+	if len(srcs) > 0 { // Use source files as dependencies
 		return fmt.Sprintf("build %s: phony %s\n", ninjaEscapePath(name), strings.Join(srcs, " "))
 	}
 	// Create empty phony target if no inputs.
 	return fmt.Sprintf("build %s: phony\n", ninjaEscapePath(name))
 }
 
+// Desc returns the description for phony build actions.
+// This description is used in ninja build output to identify the current step.
+//
+// Parameters:
+//   - m: The parser.Module (unused)
+//   - srcFile: The source file path (unused)
+//
+// Returns the string "phony" identifying this build action.
+// Returns a constant string value (no edge cases).
 func (r *phonyRule) Desc(m *parser.Module, srcFile string) string {
 	return "phony"
 }
@@ -289,26 +509,73 @@ func (r *phonyRule) Desc(m *parser.Module, srcFile string) string {
 //   - Architecture suffix comes from the build context
 type ccTestRule struct{}
 
+// Name returns the module type name for C/C++ test modules.
+// This is used by the build system to identify and register the cc_test rule type.
+//
+// Returns the string "cc_test" which is the rule type identifier.
+// Returns a constant string value (no edge cases).
 func (r *ccTestRule) Name() string { return "cc_test" }
 
+// NinjaRule returns an empty string because cc_test uses shared cc rules.
+// The actual compilation uses the shared cc_test edge generation function.
+// No separate ninja rule definition is needed.
+//
+// Parameters:
+//   - ctx: The rule render context (unused)
+//
+// Returns an empty string since shared cc rules are used.
+// Returns a constant empty string (no edge cases).
 func (r *ccTestRule) NinjaRule(ctx RuleRenderContext) string {
 	// No custom rule needed; uses cc_test edge generation.
 	return ""
 }
 
+// Outputs returns the output file paths for C/C++ test binaries.
+// The output filename is the module name with ".test" suffix and
+// architecture-specific variant suffix (e.g., "mytest.test.arm64").
+//
+// Parameters:
+//   - m: The parser.Module containing the module name
+//   - ctx: The rule render context providing ArchSuffix for architecture variant
+//
+// Returns a slice containing the test binary output path.
+// Returns nil if the module has no name.
+//
+// Edge cases:
+//   - Empty name returns nil (no output without a name)
+//   - ArchSuffix from context determines architecture variant in output path
 func (r *ccTestRule) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 	name := getName(m)
-	if name == "" {
+	if name == "" { // Module must have a name to generate output
 		return nil
 	}
 	// Output is the module name with ".test" suffix and arch variant.
 	return []string{name + ".test" + ctx.ArchSuffix}
 }
 
+// NinjaEdge generates ninja build edges for C/C++ test binaries.
+// Delegates to the shared ccTestEdge function which handles the actual
+// compilation and linking of C/C++ test sources with test-specific configurations.
+//
+// Parameters:
+//   - m: The parser.Module containing test source files and properties
+//   - ctx: The rule render context for build configuration
+//
+// Returns the ninja build edge string from ccTestEdge.
+// Returns the result of ccTestEdge (no additional edge cases).
 func (r *ccTestRule) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 	return ccTestEdge(m, ctx)
 }
 
+// Desc returns the description for C/C++ test build actions.
+// This description is used in ninja build output to identify the current step.
+//
+// Parameters:
+//   - m: The parser.Module (unused)
+//   - srcFile: The source file path (unused)
+//
+// Returns the string "cc_test" identifying this build action.
+// Returns a constant string value (no edge cases).
 func (r *ccTestRule) Desc(m *parser.Module, srcFile string) string {
 	return "cc_test"
 }
@@ -334,8 +601,22 @@ func (r *ccTestRule) Desc(m *parser.Module, srcFile string) string {
 //   - If no sources, generates nothing
 type shBinaryHostRule struct{}
 
+// Name returns the module type name for shell script binary modules.
+// This is used by the build system to identify and register the sh_binary_host rule type.
+//
+// Returns the string "sh_binary_host" which is the rule type identifier.
+// Returns a constant string value (no edge cases).
 func (r *shBinaryHostRule) Name() string { return "sh_binary_host" }
 
+// NinjaRule defines the ninja rule for copying shell scripts.
+// Defines a rule that copies the source shell script to the output location
+// and sets executable permissions using chmod +x.
+//
+// Parameters:
+//   - ctx: The rule render context (unused)
+//
+// Returns a ninja rule definition string for shell script copying.
+// Returns a constant string (no edge cases).
 func (r *shBinaryHostRule) NinjaRule(ctx RuleRenderContext) string {
 	return `rule sh_copy
  command = cp $in $out && chmod +x $out
@@ -343,18 +624,46 @@ func (r *shBinaryHostRule) NinjaRule(ctx RuleRenderContext) string {
 `
 }
 
+// Outputs returns the output file path for shell script binaries.
+// The output filename is the module name with ".sh" suffix.
+//
+// Parameters:
+//   - m: The parser.Module containing the module name
+//   - ctx: The rule render context (unused)
+//
+// Returns a slice containing the shell script output path.
+// Returns nil if the module has no name.
+//
+// Edge cases:
+//   - Empty name returns nil (no output without a name)
+//   - Output filename always has ".sh" suffix
 func (r *shBinaryHostRule) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 	name := getName(m)
-	if name == "" {
+	if name == "" { // Module must have a name to generate output
 		return nil
 	}
 	return []string{name + ".sh"}
 }
 
+// NinjaEdge generates ninja build edges for shell script binaries.
+// Creates a build edge that copies the source shell script to the output
+// and makes it executable using the sh_copy rule.
+//
+// Parameters:
+//   - m: The parser.Module containing name and srcs properties
+//   - ctx: The rule render context (unused)
+//
+// Returns a ninja build edge string for copying the shell script.
+// Returns empty string if the module has no name or no source files.
+//
+// Edge cases:
+//   - Empty name or no sources returns empty string
+//   - Only the first source file is used (srcs[0])
+//   - Output path is escaped for ninja compatibility
 func (r *shBinaryHostRule) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 	name := getName(m)
 	srcs := getSrcs(m)
-	if name == "" || len(srcs) == 0 {
+	if name == "" || len(srcs) == 0 { // Module must have name and source file
 		return ""
 	}
 	out := name + ".sh"

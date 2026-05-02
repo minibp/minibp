@@ -24,6 +24,18 @@
 //   - Visualize() generates human-readable text representation
 //   - Useful for debugging and logging build issues
 //
+// Example usage:
+//
+//	graph := dependency.NewDependencyGraph()
+//	graph.AddModule("app", "cc_binary", []dependency.Dependency{
+//	    {Name: "libfoo", Version: "1.0"},
+//	})
+//	graph.AddModule("libfoo", "cc_library", nil)
+//	res := graph.ResolveDependencies()
+//	if res.Success {
+//	    fmt.Println("Build order:", res.Order)
+//	}
+//
 // The graph maintains two edge representations:
 //   - edges: forward mapping (module -> its dependencies)
 //   - reverseEdges: reverse mapping (dependency -> modules that depend on it)
@@ -206,12 +218,16 @@ type Resolution struct {
 // The graph starts with no modules and must be populated using AddModule
 // before any resolution or query operations can be performed.
 //
-// How it works:
-//   - Allocates empty maps for modules, edges, and reverseEdges.
-//   - No modules are added until AddModule is called.
-//
 // Returns:
 //   - *DependencyGraph: A new empty dependency graph instance ready for AddModule calls
+//
+// Edge cases:
+//   - The returned graph has no modules, edges, or reverse edges until AddModule is called
+//   - All internal maps are initialized to empty (non-nil), preventing nil map access panics
+//
+// Notes:
+//   - This function never returns nil; the graph is fully initialized
+//   - Modules must be added via AddModule before calling ResolveDependencies or query methods
 func NewDependencyGraph() *DependencyGraph {
 	return &DependencyGraph{
 		modules:      make(map[string]*ModuleNode),
@@ -253,7 +269,7 @@ func NewDependencyGraph() *DependencyGraph {
 func (g *DependencyGraph) AddModule(name, moduleType string, deps []Dependency) {
 	// Check for duplicate module name.
 	// Duplicate prevention ensures each module is added exactly once.
-	if _, exists := g.modules[name]; exists {
+	if _, exists := g.modules[name]; exists { // Module already exists, skip duplicate addition
 		return
 	}
 
@@ -380,13 +396,13 @@ func (g *DependencyGraph) calculateTransitiveDeps(moduleName string) {
 	var visit func(name string)
 	visit = func(name string) {
 		// Skip already visited modules to handle cycles.
-		if visited[name] {
+		if visited[name] { // Skip already visited modules to prevent infinite recursion on cycles
 			return
 		}
 		visited[name] = true
 
 		// Add all direct dependencies of this module.
-		if node, exists := g.modules[name]; exists {
+		if node, exists := g.modules[name]; exists { // Module exists in graph, process its direct dependencies
 			for _, dep := range node.DirectDeps {
 				deps = append(deps, dep)
 				// Recursively visit the dependency.
@@ -404,7 +420,7 @@ func (g *DependencyGraph) calculateTransitiveDeps(moduleName string) {
 	seen := make(map[string]bool)
 	var uniqueDeps []Dependency
 	for _, dep := range deps {
-		if !seen[dep.Name] {
+		if !seen[dep.Name] { // First occurrence of dependency, add to unique list
 			seen[dep.Name] = true
 			uniqueDeps = append(uniqueDeps, dep)
 		}
@@ -445,7 +461,7 @@ func (g *DependencyGraph) detectConflicts() []Conflict {
 	requiredVersions := make(map[string]map[string][]string)
 	for moduleName, node := range g.modules {
 		for _, dep := range node.DirectDeps {
-			if _, exists := requiredVersions[dep.Name]; !exists {
+			if _, exists := requiredVersions[dep.Name]; !exists { // First time seeing this dependency, initialize version map
 				requiredVersions[dep.Name] = make(map[string][]string)
 			}
 			requiredVersions[dep.Name][dep.Version] = append(requiredVersions[dep.Name][dep.Version], moduleName)
@@ -455,7 +471,7 @@ func (g *DependencyGraph) detectConflicts() []Conflict {
 	// Scan for conflicts: dependencies required at multiple versions.
 	for depName, versions := range requiredVersions {
 		// Multiple versions requested = conflict.
-		if len(versions) > 1 {
+		if len(versions) > 1 { // Multiple versions required for same dependency, conflict detected
 			conflict := Conflict{
 				DepName:  depName,
 				Version1: "",
@@ -464,7 +480,7 @@ func (g *DependencyGraph) detectConflicts() []Conflict {
 			// Record first two conflicting versions and their paths.
 			// Additional versions beyond the first two are not recorded.
 			for version, modules := range versions {
-				if conflict.Version1 == "" {
+				if conflict.Version1 == "" { // First conflicting version, record it
 					conflict.Version1 = version
 					conflict.Path1 = modules
 				} else {
@@ -535,7 +551,7 @@ func (g *DependencyGraph) topologicalSort() ([]string, error) {
 
 	for name, degree := range inDegree {
 
-		if degree == 0 {
+		if degree == 0 { // Module has no dependencies, add to initial queue
 
 			queue = append(queue, name)
 
@@ -582,7 +598,7 @@ func (g *DependencyGraph) topologicalSort() ([]string, error) {
 
 			// Skip already processed modules.
 			// Once processed, a module should never be processed again.
-			if processed[moduleName] {
+			if processed[moduleName] { // Module already processed, skip
 
 				continue
 
@@ -594,7 +610,7 @@ func (g *DependencyGraph) topologicalSort() ([]string, error) {
 
 			for _, dep := range deps {
 
-				if dep == node {
+				if dep == node { // Found dependency on current node, mark hasDep
 
 					hasDep = true
 
@@ -613,7 +629,7 @@ func (g *DependencyGraph) topologicalSort() ([]string, error) {
 
 				for _, dep := range g.edges[moduleName] {
 
-					if !processed[dep] && dep != node {
+					if !processed[dep] && dep != node { // Dependency not processed, module not ready
 
 						allProcessed = false
 
@@ -625,7 +641,7 @@ func (g *DependencyGraph) topologicalSort() ([]string, error) {
 
 				// Add to queue if ready and not already queued.
 				// We check for duplicates to avoid processing the same module twice.
-				if allProcessed {
+				if allProcessed { // All dependencies processed, module is ready to build
 
 					// Check if already in queue to avoid duplicates.
 					// Duplicate entries would cause the module to appear twice in result.
@@ -633,7 +649,7 @@ func (g *DependencyGraph) topologicalSort() ([]string, error) {
 
 					for _, q := range queue {
 
-						if q == moduleName {
+						if q == moduleName { // Module already in queue, skip duplicate
 
 							found = true
 
@@ -663,7 +679,7 @@ func (g *DependencyGraph) topologicalSort() ([]string, error) {
 
 	// Step 5: Check for circular dependencies.
 	// If not all modules were processed, there's a cycle.
-	if len(result) != len(g.modules) {
+	if len(result) != len(g.modules) { // Not all modules processed, circular dependency exists
 
 		return nil, fmt.Errorf("circular dependency detected")
 
@@ -746,11 +762,11 @@ func (g *DependencyGraph) Visualize() string {
 
 	for name, node := range g.modules {
 		sb.WriteString(fmt.Sprintf("%s (%s)\n", name, node.Type))
-		if len(node.DirectDeps) > 0 {
+		if len(node.DirectDeps) > 0 { // Module has direct dependencies, list them
 			for _, dep := range node.DirectDeps {
 				sb.WriteString(fmt.Sprintf(" -> %s [%s]\n", dep.Name, dep.Version))
 			}
-		} else {
+		} else { // No direct dependencies, note it
 			sb.WriteString(" (no dependencies)\n")
 		}
 		sb.WriteString("\n")
@@ -766,6 +782,14 @@ func (g *DependencyGraph) Visualize() string {
 // Returns:
 //   - *ModuleNode: Pointer to the module node if found, nil otherwise
 //   - bool: True if the module exists in the graph
+//
+// Edge cases:
+//   - Unknown module names return nil, false
+//   - The returned node is a pointer to the internal struct; modifications affect the graph
+//
+// Notes:
+//   - Use the boolean return value to check existence instead of nil checks
+//   - The ModuleNode pointer is valid as long as the graph is not modified via AddModule
 func (g *DependencyGraph) GetModule(name string) (*ModuleNode, bool) {
 	node, exists := g.modules[name]
 	return node, exists
@@ -782,6 +806,10 @@ func (g *DependencyGraph) GetModule(name string) (*ModuleNode, bool) {
 // Edge cases:
 //   - Empty graph returns empty slice (not nil)
 //   - The returned slice is a new slice; internal modifications are safe
+//
+// Notes:
+//   - Modifying the returned slice does not affect the graph's internal module list
+//   - To modify a module, retrieve it via GetModule and edit the struct directly
 func (g *DependencyGraph) GetAllModules() []*ModuleNode {
 	modules := make([]*ModuleNode, 0, len(g.modules))
 	for _, node := range g.modules {

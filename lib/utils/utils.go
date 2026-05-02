@@ -3,6 +3,23 @@
 // and common string processing. This package bridges the CLI layer with
 // the core parser and build libraries, providing configuration injection
 // and helper functions used by the main entry point.
+//
+// This package provides the following key components:
+//   - RunConfig: Configuration struct holding all CLI flag values and derived settings
+//   - ParseRunConfig(): Parses command-line arguments into a RunConfig struct
+//   - NewEvaluatorFromConfig(): Creates a parser.Evaluator with config variables
+//   - BuildOptions(): Converts RunConfig to build pipeline options
+//   - GetVersion(): Returns formatted version string with git commit and build info
+//   - Helper functions: splitCSV(), setKeyValueConfigs(), determineSourceDir(), collectBlueprintFiles()
+//
+// Example usage:
+//
+//	cfg, err := utils.ParseRunConfig(os.Args[1:], os.Stderr)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	eval := utils.NewEvaluatorFromConfig(cfg)
+//	buildOpts := cfg.BuildOptions()
 package utils
 
 import (
@@ -150,7 +167,7 @@ func ParseRunConfig(args []string, stderr io.Writer) (RunConfig, error) {
 	// Direct flag parsing errors to stderr for better UX
 	fs.SetOutput(stderr)
 	if err := fs.Parse(args); err != nil {
-		return cfg, err
+		return cfg, err // Return parse error to caller
 	}
 
 	// Populate RunConfig from parsed flags
@@ -175,7 +192,7 @@ func ParseRunConfig(args []string, stderr io.Writer) (RunConfig, error) {
 
 	// Early exit for version flag - don't require input files
 	if cfg.ShowVersion {
-		return cfg, nil
+		return cfg, nil // Version display mode, skip input validation
 	}
 
 	// Validate: need at least one input file if not scanning directory
@@ -184,10 +201,11 @@ func ParseRunConfig(args []string, stderr io.Writer) (RunConfig, error) {
 		return cfg, fmt.Errorf("missing input path")
 	}
 
+	// Determine source directory and collect all .bp files to parse
 	cfg.SrcDir = determineSourceDir(cfg.All, cfg.Inputs)
 	files, err := collectBlueprintFiles(cfg.All, cfg.SrcDir, cfg.Inputs)
 	if err != nil {
-		return cfg, err
+		return cfg, err // Globbing or file collection failed
 	}
 	cfg.Inputs = files
 	return cfg, nil
@@ -215,19 +233,19 @@ func NewEvaluatorFromConfig(cfg RunConfig) *parser.Evaluator {
 	// Default to current system architecture (host build)
 	arch := runtime.GOARCH
 	if cfg.Arch != "" {
-		arch = cfg.Arch
+		arch = cfg.Arch // Use user-specified architecture
 	}
 
 	eval.SetConfig("arch", arch)
 	eval.SetConfig("host", "true")
 	if cfg.TargetOS != "" {
-		eval.SetConfig("os", cfg.TargetOS)
+		eval.SetConfig("os", cfg.TargetOS) // Use specified target OS
 	} else {
-		eval.SetConfig("os", "linux")
+		eval.SetConfig("os", "linux") // Default to Linux when not specified
 	}
 	eval.SetConfig("target", arch)
-	setKeyValueConfigs(eval, "variant.", cfg.Variant)
-	setKeyValueConfigs(eval, "product.", cfg.Product)
+	setKeyValueConfigs(eval, "variant.", cfg.Variant) // Set variant.key=value pairs
+	setKeyValueConfigs(eval, "product.", cfg.Product) // Set product.key=value pairs
 	return eval
 }
 
@@ -266,14 +284,14 @@ func NewEvaluatorFromConfig(cfg RunConfig) *parser.Evaluator {
 func (cfg RunConfig) BuildOptions() BuildOptions {
 	arch := runtime.GOARCH
 	if cfg.Arch != "" {
-		arch = cfg.Arch
+		arch = cfg.Arch // Use configured architecture
 	}
 	return BuildOptions{
 		Arch:     arch,
 		SrcDir:   cfg.SrcDir,
 		OutFile:  cfg.OutFile,
-		Inputs:   append([]string(nil), cfg.Inputs...),
-		Multilib: append([]string(nil), cfg.Multilib...),
+		Inputs:   append([]string(nil), cfg.Inputs...),   // Deep copy to prevent mutation
+		Multilib: append([]string(nil), cfg.Multilib...), // Deep copy to prevent mutation
 		CC:       cfg.CC,
 		CXX:      cfg.CXX,
 		AR:       cfg.AR,
@@ -308,12 +326,14 @@ func GetVersion() string {
 	v := version.Get()
 	gitCommit := v.GitCommit
 	if gitCommit == "unknown" {
+		// Try to get git commit at runtime if not embedded at build time
 		if commit, err := getGitCommit(); err == nil {
 			gitCommit = commit
 		}
 	}
 	buildDate := v.BuildDate
 	if buildDate == "unknown" {
+		// Fall back to current date if build date not embedded
 		buildDate = time.Now().Format("2006-01-02")
 	}
 	return fmt.Sprintf("%s (git: %s, built: %s, go: %s)", v.MinibpVer, gitCommit, buildDate, v.GoVersion)
@@ -344,7 +364,7 @@ func getGitCommit() (string, error) {
 	cmd := exec.Command("git", "rev-parse", "--short", "HEAD")
 	output, err := cmd.Output()
 	if err != nil {
-		return "", err
+		return "", err // Git not available or not in a git repository
 	}
 	return strings.TrimSpace(string(output)), nil
 }
@@ -369,12 +389,12 @@ func getGitCommit() (string, error) {
 //   - For relative paths like "../../bp/Android.bp", returns the normalized parent.
 func determineSourceDir(all bool, inputs []string) string {
 	if all && len(inputs) > 0 {
-		return inputs[0]
+		return inputs[0] // Use first input as source directory when -a flag is set
 	}
 	if len(inputs) > 0 {
-		return filepath.Dir(inputs[0])
+		return filepath.Dir(inputs[0]) // Derive source dir from first input file
 	}
-	return "."
+	return "." // Default to current directory
 }
 
 // collectBlueprintFiles returns the input files when not scanning all
@@ -397,8 +417,9 @@ func determineSourceDir(all bool, inputs []string) string {
 //   - Hidden files (starting with .) are NOT matched by default glob.
 func collectBlueprintFiles(all bool, srcDir string, inputs []string) ([]string, error) {
 	if !all {
-		return inputs, nil
+		return inputs, nil // Return explicit inputs when not scanning directory
 	}
+	// Glob for all .bp files in the source directory
 	bpFiles, err := filepath.Glob(filepath.Join(srcDir, "*.bp"))
 	if err != nil {
 		return nil, fmt.Errorf("error globbing bp files: %w", err)
@@ -424,14 +445,14 @@ func collectBlueprintFiles(all bool, srcDir string, inputs []string) ([]string, 
 //   - Input "arm64,,x86_64" with consecutive commas returns ["arm64", "x86_64"]
 func splitCSV(raw string) []string {
 	if raw == "" {
-		return nil
+		return nil // Empty input returns nil
 	}
 	parts := strings.Split(raw, ",")
 	result := make([]string, 0, len(parts))
 	for _, part := range parts {
-		part = strings.TrimSpace(part)
+		part = strings.TrimSpace(part) // Remove leading/trailing whitespace
 		if part != "" {
-			result = append(result, part)
+			result = append(result, part) // Only add non-empty parts
 		}
 	}
 	return result
@@ -456,22 +477,22 @@ func splitCSV(raw string) []string {
 //   - Order matters: duplicate keys overwrite previous values
 func setKeyValueConfigs(eval *parser.Evaluator, prefix, raw string) {
 	if raw == "" {
-		return
+		return // Nothing to configure
 	}
 	for _, entry := range strings.Split(raw, ",") {
-		entry = strings.TrimSpace(entry)
+		entry = strings.TrimSpace(entry) // Remove surrounding whitespace
 		if entry == "" {
-			continue
+			continue // Skip empty entries
 		}
-		parts := strings.SplitN(entry, "=", 2)
+		parts := strings.SplitN(entry, "=", 2) // Split on first "=" only
 		if len(parts) != 2 {
-			continue
+			continue // Skip entries without "="
 		}
 		key := strings.TrimSpace(parts[0])
 		val := strings.TrimSpace(parts[1])
 		if key == "" {
-			continue
+			continue // Skip entries with empty key
 		}
-		eval.SetConfig(prefix+key, val)
+		eval.SetConfig(prefix+key, val) // Set "prefix.key" = value
 	}
 }

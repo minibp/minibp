@@ -41,12 +41,36 @@ import (
 )
 
 // configGen implements config file generation from templates.
+// It processes template files (e.g., config.h.in) and replaces placeholders
+// with configuration variable values, generating output files with proper
+// define/undef handling for C/C++ header configurations.
+//
+// This rule type handles the complete workflow of:
+//   - Reading template files with ${VAR} and ${define VAR} placeholders
+//   - Substituting configuration variables from module properties
+//   - Generating appropriate #define or /* #undef */ directives
+//   - Writing output to the specified configdir
+//
+// Fields: (none - stateless rule handler)
 type configGen struct{}
 
 // Name returns the module type name for config generation.
+// This is used by the build system to identify and register the config_gen rule type.
+//
+// Returns the string "config_gen" which is the rule type identifier.
+// Returns a constant string value (no edge cases).
 func (r *configGen) Name() string { return "config_gen" }
 
 // NinjaRule defines the ninja rule for config file generation.
+// Defines a ninja rule that uses sed to perform variable substitution
+// on template files. The rule reads the template file (${in}), applies
+// sed substitution commands (${sed_args}), and writes to the output file (${out}).
+//
+// Parameters:
+//   - ctx: The rule render context (unused for this rule definition)
+//
+// Returns a ninja rule definition string with sed-based substitution.
+// Returns a constant string (no edge cases).
 func (r *configGen) NinjaRule(ctx RuleRenderContext) string {
 	return `rule config_gen
  command = sed ${sed_args} ${in} > ${out}
@@ -55,13 +79,29 @@ func (r *configGen) NinjaRule(ctx RuleRenderContext) string {
 }
 
 // Outputs returns the output file paths for config generation.
+// Computes the output file paths by stripping the ".in" suffix from template
+// filenames and prepending the configdir. If configdir is not specified,
+// defaults to "${builddir}/include".
+//
+// Parameters:
+//   - m: The parser.Module containing configfiles and configdir properties
+//   - ctx: The rule render context (unused)
+//
+// Returns a slice of output file paths for the generated config files.
+// Returns nil if no configfiles are specified.
+//
+// Edge cases:
+//   - Empty configfiles list returns nil
+//   - Missing .in suffix: uses the template filename as-is
+//   - Empty configdir defaults to "${builddir}/include"
+//   - configdir path is prepended to all output filenames
 func (r *configGen) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 	configfiles := GetListProp(m, "configfiles")
-	if len(configfiles) == 0 {
+	if len(configfiles) == 0 { // No template files specified, nothing to generate
 		return nil
 	}
 	configdir := GetStringProp(m, "configdir")
-	if configdir == "" {
+	if configdir == "" { // Use default include directory if not specified
 		configdir = "${builddir}/include"
 	}
 
@@ -71,12 +111,11 @@ func (r *configGen) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 		// configfile is the template (e.g., "config.h.in")
 		// output is the generated file (e.g., "config.h")
 		filename := strings.TrimSuffix(configfile, ".in")
-		if filename == configfile {
-			// No .in suffix, use the same name
+		if filename == configfile { // No .in suffix, use the same name
 			filename = configfile
 		}
 		// Prepend configdir
-		if configdir != "" {
+		if configdir != "" { // Add output directory prefix to filename
 			filename = fmt.Sprintf("%s/%s", configdir, filename)
 		}
 		outputs = append(outputs, filename)
@@ -85,15 +124,37 @@ func (r *configGen) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 }
 
 // NinjaEdge generates ninja build edges for config file generation.
+// Creates build rules that use sed to substitute ${VAR} and ${define VAR}
+// placeholders in template files. Each config variable is processed to generate
+// appropriate #define or /* #undef */ directives based on the variable value.
+//
+// Parameters:
+//   - m: The parser.Module containing configfiles, configvars, and configvar_* properties
+//   - ctx: The rule render context providing PathPrefix for input file paths
+//
+// Returns a string containing ninja build edges for all config file generations.
+// Returns empty string if no configfiles are specified.
+//
+// Edge cases:
+//   - Empty configfiles list returns empty string
+//   - Mismatch between configfiles and outputs: breaks loop safely
+//   - Empty configdir defaults to "${builddir}/include"
+//   - Variable values: empty->undef, 1/true->#define 1, 0/false->#define 0 (commented), else->#define value
+//   - Fallback regex handles any remaining ${define VAR} not explicitly defined
+//
+// Notes:
+//   - In ninja build files, literal $ must be escaped as $$, so ${ becomes $${
+//   - The sed delimiter is | to avoid conflicts with file paths containing /
+//   - A phony target is created for the module name for easy reference
 func (r *configGen) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 	configfiles := GetListProp(m, "configfiles")
-	if len(configfiles) == 0 {
+	if len(configfiles) == 0 { // No template files to process
 		return ""
 	}
 
 	configvars := GetListProp(m, "configvars")
 	configdir := GetStringProp(m, "configdir")
-	if configdir == "" {
+	if configdir == "" { // Use default include directory if not specified
 		configdir = "${builddir}/include"
 	}
 
@@ -101,7 +162,7 @@ func (r *configGen) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 
 	outputs := r.Outputs(m, ctx)
 	for i, configfile := range configfiles {
-		if i >= len(outputs) {
+		if i >= len(outputs) { // Safety check: stop if outputs don't match configfiles
 			break
 		}
 		out := outputs[i]
@@ -114,7 +175,7 @@ func (r *configGen) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 
 		// Add configvars
 		for _, varName := range configvars {
-			// Get the config variable value
+			// Get the config variable value from module properties
 			propName := fmt.Sprintf("configvar_%s", varName)
 			value := GetStringProp(m, propName)
 
@@ -123,13 +184,13 @@ func (r *configGen) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 
 			// Generate sed command for ${define VAR} replacement
 			// In ninja, literal $ must be written as $$, so ${ becomes $${
-			if value == "" {
+			if value == "" { // Empty value: generate /* #undef VAR */
 				sedArgs = append(sedArgs, fmt.Sprintf("-e 's|$${\\define %s}|/* #undef %s */|g'", varName, varName))
-			} else if value == "1" || value == "true" {
+			} else if value == "1" || value == "true" { // Truthy value: generate #define VAR 1
 				sedArgs = append(sedArgs, fmt.Sprintf("-e 's|$${\\define %s}|#define %s 1|g'", varName, varName))
-			} else if value == "0" || value == "false" {
+			} else if value == "0" || value == "false" { // Falsy value: generate commented #define
 				sedArgs = append(sedArgs, fmt.Sprintf("-e 's|$${\\define %s}|/* #define %s 0 */|g'", varName, varName))
-			} else {
+			} else { // Other value: generate #define VAR value
 				sedArgs = append(sedArgs, fmt.Sprintf("-e 's|$${\\define %s}|#define %s %s|g'", varName, varName, value))
 			}
 		}
@@ -145,7 +206,7 @@ func (r *configGen) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 
 		// Write the phony target for the module name (test_config -> build/include/config.h)
 		moduleName := getName(m)
-		if moduleName != "" {
+		if moduleName != "" { // Create phony alias for easy reference
 			edges.WriteString(fmt.Sprintf("build %s: phony %s\n", moduleName, out))
 		}
 	}
@@ -154,6 +215,14 @@ func (r *configGen) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 }
 
 // Desc returns a short description of the build action.
+// This description is used in ninja build output to identify the current step.
+//
+// Parameters:
+//   - m: The parser.Module (unused for this description)
+//   - srcFile: The source file path (unused for this description)
+//
+// Returns the string "config_gen" identifying this build action.
+// Returns a constant string (no edge cases).
 func (r *configGen) Desc(m *parser.Module, srcFile string) string {
 	return "config_gen"
 }

@@ -89,12 +89,12 @@ func detectCompilerType(srcs []string) string {
 		ext := strings.ToLower(filepath.Ext(src))
 		switch ext {
 		case ".cpp", ".cc", ".cxx", ".c++", ".hpp", ".hxx":
-			return "cpp"
+			return "cpp" // C++ extension found: use C++ compiler
 		case ".c", ".h":
-			continue
+			continue // C extension: continue checking other files
 		}
 	}
-	return "cc"
+	return "cc" // No C++ files found: default to C compiler
 }
 
 // ccCompilerCmd returns the C/C++ compiler command to use for compilation.
@@ -237,14 +237,13 @@ func ltoArchiveCmd(ar string, lto string) string {
 type ccLibrary struct{}
 
 // Name returns the module type name for cc_library.
-//
-// Description:
-//
-//	Returns "cc_library" which is used to match this rule implementation
-//	to module definitions in Blueprint files.
+// This name matches the module type in Blueprint files (e.g., cc_library { ... }).
 //
 // Returns:
-//   - "cc_library" string
+//   - "cc_library" string identifying this build rule type
+//
+// Edge cases:
+//   - None (returns constant string)
 func (r *ccLibrary) Name() string { return "cc_library" }
 
 // NinjaRule defines the ninja compilation, archiving, and linking rules for C/C++ libraries.
@@ -650,8 +649,14 @@ func (r *ccLibrary) Desc(m *parser.Module, srcFile string) string {
 type ccLibraryStatic struct{}
 
 // Name returns the module type name for cc_library_static.
-// This name is used to match module types in Blueprint files (e.g., cc_library_static { ... }).
+// This name matches the module type in Blueprint files (e.g., cc_library_static { ... }).
 // Unlike cc_library, this type always produces static libraries regardless of "shared" property.
+//
+// Returns:
+//   - "cc_library_static" string identifying this build rule type
+//
+// Edge cases:
+//   - None (returns constant string)
 func (r *ccLibraryStatic) Name() string { return "cc_library_static" }
 
 // NinjaRule defines the ninja compilation and archiving rules for static libraries.
@@ -833,8 +838,14 @@ func (r *ccLibraryStatic) Desc(m *parser.Module, srcFile string) string {
 type ccLibraryShared struct{}
 
 // Name returns the module type name for cc_library_shared.
-// This name is used to match module types in Blueprint files (e.g., cc_library_shared { ... }).
+// This name matches the module type in Blueprint files (e.g., cc_library_shared { ... }).
 // Unlike cc_library, this type always produces shared libraries regardless of "shared" property.
+//
+// Returns:
+//   - "cc_library_shared" string identifying this build rule type
+//
+// Edge cases:
+//   - None (returns constant string)
 func (r *ccLibraryShared) Name() string { return "cc_library_shared" }
 
 // NinjaRule defines the ninja compilation and linking rules for shared libraries.
@@ -1042,8 +1053,14 @@ func (r *ccLibraryShared) Desc(m *parser.Module, srcFile string) string {
 type ccObject struct{}
 
 // Name returns the module type name for cc_object.
-// This name is used to match module types in Blueprint files (e.g., cc_object { ... }).
+// This name matches the module type in Blueprint files (e.g., cc_object { ... }).
 // Object files are compiled individually and can be linked later into libraries or binaries.
+//
+// Returns:
+//   - "cc_object" string identifying this build rule type
+//
+// Edge cases:
+//   - None (returns constant string)
 func (r *ccObject) Name() string { return "cc_object" }
 
 // NinjaRule defines the ninja compilation rules for object files.
@@ -1211,8 +1228,14 @@ func (r *ccObject) Desc(m *parser.Module, srcFile string) string {
 type ccBinary struct{}
 
 // Name returns the module type name for cc_binary.
-// This name is used to match module types in Blueprint files (e.g., cc_binary { ... }).
+// This name matches the module type in Blueprint files (e.g., cc_binary { ... }).
 // Binaries are executable programs that can be run directly on the target system.
+//
+// Returns:
+//   - "cc_binary" string identifying this build rule type
+//
+// Edge cases:
+//   - None (returns constant string)
 func (r *ccBinary) Name() string { return "cc_binary" }
 
 // NinjaRule defines the ninja compilation and linking rules for binaries.

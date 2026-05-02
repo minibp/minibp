@@ -1,5 +1,3 @@
-// rules.go - Ninja rule interface and rule registry for minibp.
-//
 // Package ninja provides utilities for generating Ninja build files from
 // Blueprint module definitions. This file (rules.go) defines the core interfaces,
 // rule rendering context, and utility functions for module property handling.
@@ -97,22 +95,22 @@ type BuildRule interface {
 //   - Includes both tool paths and flags for complete command generation
 //   - Supports cross-compilation via GOOS/GOARCH and Sysroot
 type RuleRenderContext struct {
-	CC             string
-	CXX            string
-	AR             string
+	CC             string // C compiler command (e.g., "gcc")
+	CXX            string // C++ compiler command (e.g., "g++")
+	AR             string // Static library archiver (e.g., "ar")
 	LD             string // Linker command; empty uses CC/CXX for linking
-	ArchSuffix     string
-	CFlags         string
-	LdFlags        string
-	Sysroot        string
-	Ccache         string
-	Lto            string
-	GOOS           string
-	GOARCH         string
-	PathPrefix     string
-	Modules        map[string]*parser.Module
-	GoModulePath   string
-	GoImportPrefix string
+	ArchSuffix     string // Architecture suffix for outputs (e.g., "_arm64")
+	CFlags         string // Global C/C++ compiler flags
+	LdFlags        string // Global linker flags
+	Sysroot        string // Cross-compilation sysroot path
+	Ccache         string // Path to ccache binary (empty if not used)
+	Lto            string // Default LTO mode ("full", "thin", or "")
+	GOOS           string // Go target OS (e.g., "linux")
+	GOARCH         string // Go target architecture (e.g., "amd64")
+	PathPrefix     string // Prefix for dependency file paths
+	Modules        map[string]*parser.Module // Map of all modules for dependency resolution
+	GoModulePath   string // Go module path
+	GoImportPrefix string // Go import prefix
 	ExportCFlags   string // Exported C flags from dependencies
 	ExportLdFlags  string // Exported linker flags from dependencies
 }
@@ -322,32 +320,32 @@ func GetRule(name string) BuildRule {
 //	}
 func ApplyDefaults(m *parser.Module, modules map[string]*parser.Module) {
 	// Early return if module has no properties
-	if m.Map == nil {
+	if m.Map == nil { // Module has no property map, nothing to apply
 		return
 	}
 	// Get list of default module names
 	defaultNames := GetListProp(m, "defaults")
-	if len(defaultNames) == 0 {
+	if len(defaultNames) == 0 { // No defaults to apply, return early
 		return
 	}
 	// Process each default module
 	for _, defaultName := range defaultNames {
 		// Strip leading ":" if present (both ":name" and "name" are valid)
-		defaultName = strings.TrimPrefix(defaultName, ":")
+		defaultName = strings.TrimPrefix(defaultName, ":") // Normalize to name without ":" prefix
 		// Look up the defaults module
 		defaultMod, ok := modules[defaultName]
-		if !ok || defaultMod == nil {
+		if !ok || defaultMod == nil { // Defaults module not found, skip
 			continue
 		}
 		// Verify it's actually a defaults module type
-		if !isDefaultsModuleType(defaultMod.Type) {
+		if !isDefaultsModuleType(defaultMod.Type) { // Not a defaults module type, skip
 			continue
 		}
 		// Merge properties from defaults module
-		if defaultMod.Map != nil {
+		if defaultMod.Map != nil { // Defaults module has properties to merge
 			for _, prop := range defaultMod.Map.Properties {
 				// Skip name and defaults properties - they don't merge
-				if prop.Name == "name" || prop.Name == "defaults" {
+				if prop.Name == "name" || prop.Name == "defaults" { // Excluded properties, skip
 					continue
 				}
 				// Check if target module already has this property
@@ -357,8 +355,8 @@ func ApplyDefaults(m *parser.Module, modules map[string]*parser.Module) {
 						found = true
 						// Additive merge for lists: append default items to existing list
 						// This allows defaults to add flags while target can override/add
-						if defaultList, ok := prop.Value.(*parser.List); ok {
-							if targetList, ok := targetProp.Value.(*parser.List); ok {
+						if defaultList, ok := prop.Value.(*parser.List); ok { // Default property is a list type
+							if targetList, ok := targetProp.Value.(*parser.List); ok { // Target property is a list type, merge
 								// Create merged list: target values first, then defaults
 								merged := make([]parser.Expression, len(targetList.Values))
 								copy(merged, targetList.Values)
@@ -377,7 +375,7 @@ func ApplyDefaults(m *parser.Module, modules map[string]*parser.Module) {
 					}
 				}
 				// If property doesn't exist in target, add it from defaults
-				if !found {
+				if !found { // Property not in target, add from defaults
 					m.Map.Properties = append(m.Map.Properties, prop)
 				}
 			}
@@ -414,12 +412,12 @@ func ApplyDefaults(m *parser.Module, modules map[string]*parser.Module) {
 func GetDefaultVisibility(modules map[string]*parser.Module, packageName string) []string {
 	// Look for package module in the given package
 	for name, mod := range modules {
-		if mod == nil || mod.Type != "package" {
+		if mod == nil || mod.Type != "package" { // Skip nil or non-package modules
 			continue
 		}
 		// Package modules are named after their package path
 		// Match exact name or suffix (handles "foo" and "path/to/foo")
-		if name == packageName || strings.HasSuffix(name, "/"+packageName) {
+		if name == packageName || strings.HasSuffix(name, "/"+packageName) { // Match exact or suffix package name
 			return GetListProp(mod, "default_visibility")
 		}
 	}
@@ -466,9 +464,9 @@ func GetPackageDefaultVisibility(modules map[string]*parser.Module, modulePath s
 	parts := strings.Split(modulePath, "/")
 	// Starting from full path, try progressively shorter paths
 	// This finds the closest ancestor with default_visibility
-	for i := len(parts); i > 0; i-- {
+	for i := len(parts); i > 0; i-- { // Traverse from full path to shortest ancestor
 		packageName := strings.Join(parts[:i], "/")
-		if vis := GetDefaultVisibility(modules, packageName); vis != nil {
+		if vis := GetDefaultVisibility(modules, packageName); vis != nil { // Found default visibility, return it
 			return vis
 		}
 	}
@@ -539,7 +537,7 @@ func ParseModuleReference(s string) *ModuleReference {
 	s = strings.TrimSpace(s)
 
 	// Handle cross-namespace references: //namespace:module
-	if strings.HasPrefix(s, "//") && strings.Contains(s, ":") {
+	if strings.HasPrefix(s, "//") && strings.Contains(s, ":") { // Cross-namespace reference
 		ref := &ModuleReference{IsModuleRef: true}
 		sepIdx := strings.Index(s, ":")
 		ref.ModuleName = s[sepIdx+1:]
@@ -547,7 +545,7 @@ func ParseModuleReference(s string) *ModuleReference {
 	}
 
 	// Must start with ":" to be a module reference
-	if !strings.HasPrefix(s, ":") {
+	if !strings.HasPrefix(s, ":") { // Not a module reference, return nil
 		return nil
 	}
 
@@ -557,7 +555,7 @@ func ParseModuleReference(s string) *ModuleReference {
 
 	// Check for tag syntax: {tag}
 	// Tags are used for selecting specific output variants
-	if strings.Contains(s, "{") && strings.HasSuffix(s, "}") {
+	if strings.Contains(s, "{") && strings.HasSuffix(s, "}") { // Has tag syntax
 		parts := strings.SplitN(s, "{", 2)
 		ref.ModuleName = parts[0]
 		tag := strings.TrimSuffix(parts[1], "}")
@@ -609,36 +607,36 @@ func ParseModuleReference(s string) *ModuleReference {
 //	// outputs might be ["libfoo.so"] (first output + ".shared" tag)
 func ResolveModuleOutputs(ref *ModuleReference, modules map[string]*parser.Module, ctx RuleRenderContext) []string {
 	// Validate reference
-	if ref == nil || !ref.IsModuleRef {
+	if ref == nil || !ref.IsModuleRef { // Invalid reference, return nil
 		return nil
 	}
 
 	// Look up the module
 	mod, ok := modules[ref.ModuleName]
-	if !ok || mod == nil {
+	if !ok || mod == nil { // Module not found, return nil
 		return nil
 	}
 
 	// Get the rule for this module type
 	rule := GetRule(mod.Type)
-	if rule == nil {
+	if rule == nil { // No rule for module type, return nil
 		return nil
 	}
 
 	// Get outputs from the rule
 	outputs := rule.Outputs(mod, ctx)
-	if len(outputs) == 0 {
+	if len(outputs) == 0 { // Module has no outputs, return nil
 		return nil
 	}
 
 	// If no tag specified, return all outputs
-	if ref.Tag == "" {
+	if ref.Tag == "" { // No tag, return all outputs
 		return outputs
 	}
 
 	// Handle specific tags
 	// .stamp files are special touch files that track completion
-	if ref.Tag == ".stamp" {
+	if ref.Tag == ".stamp" { // Special stamp tag, append .stamp to first output
 		return []string{outputs[0] + ".stamp"}
 	}
 

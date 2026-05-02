@@ -22,6 +22,19 @@
 //   - BaseModule: Common implementation with shared fields
 //   - Factory interface: Creates Module instances from parsed AST
 //   - Registry: Maps module type names to factory implementations
+//
+// Examples:
+//
+//	To create a custom module type, embed BaseModule and add type-specific fields:
+//
+//	  type CCLibrary struct {
+//	      module.BaseModule  // Inherits all Module interface methods
+//	      CFlags   []string  // C/C++ compiler flags
+//	      Includes []string  // Include search paths
+//	  }
+//
+//	Factories populate BaseModule fields from parsed Blueprint properties and
+//	register the module with the global registry for build processing.
 package module
 
 // Module is the interface that all module types must implement.
@@ -231,92 +244,96 @@ type BaseModule struct {
 }
 
 // Name returns the module name from the Name_ field.
-//
-// Description:
-// Implements the Module interface method Name().
-// Returns the module's unique identifier within its Blueprint package.
-//
-// How it works:
-// Simply returns the Name_ field value.
+// Implements the Module interface's Name method to provide the module's unique identifier.
 //
 // Returns:
-//   - The Name_ field value (string)
+//   - The Name_ field value (string); empty if the BaseModule is zero-value
+//
+// Edge cases:
+//   - Zero-value BaseModule: Returns empty string since Name_ is not initialized
+//
+// Notes:
+//   - Simply returns the internal Name_ field without modification
+//   - Complies with the Module interface requirement
 func (m *BaseModule) Name() string { return m.Name_ }
 
 // Type returns the module type string from the Type_ field.
-//
-// Description:
-// Implements the Module interface method Type().
-// Returns the module type identifier that determines how the module is built.
-//
-// How it works:
-// Simply returns the Type_ field value.
+// Implements the Module interface's Type method to identify the module's build category.
 //
 // Returns:
-//   - The Type_ field value (e.g., "cc_library", "go_binary")
+//   - The Type_ field value (string, e.g., "cc_library", "go_binary"); empty if zero-value BaseModule
+//
+// Edge cases:
+//   - Zero-value BaseModule: Returns empty string since Type_ is not initialized
+//
+// Notes:
+//   - Determines which build rules are generated for this module
+//   - Simply returns the internal Type_ field without modification
 func (m *BaseModule) Type() string { return m.Type_ }
 
 // Srcs returns the list of source files from the Srcs_ field.
-//
-// Description:
-// Implements the Module interface method Srcs().
-// Returns the source files that need to be compiled or processed.
-//
-// How it works:
-// Simply returns the Srcs_ field value.
+// Implements the Module interface's Srcs method to provide the module's source files.
 //
 // Returns:
-//   - The Srcs_ field value (a slice that may be empty but never nil)
+//   - The Srcs_ field value ([]string); may be empty for header-only modules; never nil if created via factory
+//
+// Edge cases:
+//   - Zero-value BaseModule: Returns nil (Srcs_ is not initialized)
+//   - Factory-created modules: Srcs_ is guaranteed to be non-nil (replaced with empty slice if nil)
+//
+// Notes:
+//   - Simply returns the internal Srcs_ field without modification
+//   - Paths are relative to the Blueprint file defining the module
 func (m *BaseModule) Srcs() []string { return m.Srcs_ }
 
-// Deps returns the list of dependency module names from the Deps_ field.
-//
-// Description:
-// Implements the Module interface method Deps().
-// Returns the direct dependencies for this module.
-//
-// How it works:
-// Simply returns the Deps_ field value.
+// Deps returns the list of direct dependency module names from the Deps_ field.
+// Implements the Module interface's Deps method to provide the module's dependencies.
 //
 // Returns:
-//   - The Deps_ field value (a slice that may be empty but never nil)
+//   - The Deps_ field value ([]string); may be empty if no dependencies; never nil if created via factory
+//
+// Edge cases:
+//   - Zero-value BaseModule: Returns nil (Deps_ is not initialized)
+//   - Factory-created modules: Deps_ is guaranteed to be non-nil (replaced with empty slice if nil)
+//   - Dependencies are direct only, not transitive
+//
+// Notes:
+//   - Simply returns the internal Deps_ field without modification
+//   - Dependencies are referenced by ":name" or "//path:name" syntax
 func (m *BaseModule) Deps() []string { return m.Deps_ }
 
 // Props returns a reference to the internal properties map from the Props_ field.
-//
-// Description:
-// Implements the Module interface method Props().
-// Returns all module properties as a map for generic access.
-//
-// How it works:
-// Returns the internal Props_ map reference directly, not a copy.
-//
-// Important:
-// Returns the internal map reference, not a copy.
-// Callers must not modify the returned map as it shares storage with the module.
+// Implements the Module interface's Props method to provide all module properties.
 //
 // Returns:
-//   - The Props_ field value (the internal map storage)
+//   - The Props_ field value (map[string]interface{}); may be nil if zero-value BaseModule or no properties
+//
+// Edge cases:
+//   - Zero-value BaseModule: Returns nil (Props_ is not initialized)
+//   - No custom properties: Returns a non-nil map containing only built-in properties (name, srcs, deps)
+//
+// Notes:
+//   - Returns a reference to the internal map, not a copy
+//   - Callers must NOT modify the returned map to avoid corrupting module state
+//   - Contains both built-in and custom properties from the Blueprint definition
 func (m *BaseModule) Props() map[string]interface{} { return m.Props_ }
 
 // GetProp looks up a property by key in the Props_ map and returns its value.
-//
-// Description:
-// Implements the Module interface method GetProp().
-// Provides convenient access to individual property values.
-//
-// How it works:
-// Looks up the key in the internal Props_ map and returns the value.
-// Returns nil if the key doesn't exist.
+// Implements the Module interface's GetProp method for convenient property access.
 //
 // Parameters:
-//   - key: The property name to look up
+//   - key: The property name to look up (string)
 //
 // Returns:
-//   - The property value if the key exists in Props_
-//   - nil if the key does not exist (property not defined)
+//   - The property value (interface{}: string, int, bool, []interface{}, map[string]interface{})
+//   - nil if the key does not exist or Props_ is nil
 //
 // Edge cases:
-//   - Returns nil if Props_ is nil (no properties defined)
-//   - Returns nil for existing keys with nil values
+//   - Props_ is nil: Returns nil (no properties defined)
+//   - Key exists with nil value: Returns nil
+//   - Key does not exist: Returns nil
+//
+// Notes:
+//   - Use type assertions to convert the returned value to the expected type
+//   - Example: cflags, ok := m.GetProp("cflags").([]string)
 func (m *BaseModule) GetProp(key string) interface{} { return m.Props_[key] }

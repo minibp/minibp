@@ -115,16 +115,12 @@ func sanitizePathComponent(s string) string {
 //   - The copy command is delegated to copyCommand() which allows the build
 //     system to configure the appropriate copy tool (cp, copy, etc.).
 type prebuiltEtcRule struct {
-	typeName string
-	subdir   string
+	typeName string // Module type name as used in .bp files (e.g., "prebuilt_etc")
+	subdir   string // Installation subdirectory relative to system root (e.g., "etc", "usr/share")
 }
 
 // Name returns the module type name for this prebuilt_etc rule.
-//
-// This method implements the BuildRule interface. The returned name
-// must match the module type string used in .bp files (e.g., "prebuilt_etc").
-// The name is used by the build system to associate modules with their
-// corresponding rule implementations.
+// This method implements the BuildRule interface.
 //
 // Returns:
 //   - The module type name string (e.g., "prebuilt_etc").
@@ -132,6 +128,9 @@ type prebuiltEtcRule struct {
 //
 // Edge cases:
 //   - Returns empty string if typeName was not initialized (programmer error).
+//
+// Notes:
+//   - The typeName is set during rule registration and should not be modified after initialization.
 func (r *prebuiltEtcRule) Name() string { return r.typeName }
 
 // NinjaRule returns the Ninja build rule definition for copying prebuilt files to system directories.
@@ -209,31 +208,21 @@ func (r *prebuiltEtcRule) NinjaRule(ctx RuleRenderContext) string {
 //   - Only returning a single output path because prebuilt_etc modules
 //     produce exactly one output file per module definition.
 func (r *prebuiltEtcRule) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
-	// Get the first source file from the module's "src" property.
-	// Prebuilt modules typically have a single source file.
 	src := getFirstSource(m)
-	if src == "" {
-		// No source file defined; cannot determine output path.
+	if src == "" { // No source file defined, cannot determine output path
 		return nil
 	}
 
-	// Determine the output filename.
-	// Prefer explicit "filename" property; fall back to source file base name.
 	filename := GetStringProp(m, "filename")
-	if filename == "" {
+	if filename == "" { // No explicit filename, fall back to source file basename
 		filename = filepath.Base(src)
 	}
 
-	// Sanitize the filename to prevent path traversal attacks.
-	// This replaces '/' and '\' with '_' to ensure the filename is a simple path component.
-	filename = sanitizePathComponent(filename)
+	filename = sanitizePathComponent(filename) // Sanitize filename to prevent path traversal
 
-	// Construct the output path by joining subdirectory with filename.
 	out := filename
-	if r.subdir != "" {
-		// Sanitize subdir to prevent path traversal.
-		// pathutil.SanitizePath removes ".." and "." components.
-		safeSubdir := pathutil.SanitizePath(r.subdir)
+	if r.subdir != "" { // Append sanitized subdirectory to output path
+		safeSubdir := pathutil.SanitizePath(r.subdir) // Sanitize subdir to prevent path traversal
 		out = filepath.Join(safeSubdir, filename)
 	}
 
@@ -274,13 +263,9 @@ func (r *prebuiltEtcRule) NinjaEdge(m *parser.Module, ctx RuleRenderContext) str
 	// Get the source file path from the module's "src" property.
 	src := getFirstSource(m)
 
-	// Get the output file paths from Outputs().
-	// This also handles filename derivation and path construction.
 	outs := r.Outputs(m, ctx)
 
-	// Validate that we have both source and outputs before generating the build edge.
-	if src == "" || len(outs) == 0 {
-		// Missing required information; cannot generate a valid build edge.
+	if src == "" || len(outs) == 0 { // Missing source or outputs, cannot generate build edge
 		return ""
 	}
 
@@ -340,15 +325,11 @@ func (r *prebuiltEtcRule) Desc(m *parser.Module, srcFile string) string { return
 //   - Using stem (or module name) rather than source file name allows
 //     renaming the binary in the output independently of the source filename.
 type prebuiltBinaryRule struct {
-	typeName string
+	typeName string // Module type name as used in .bp files (e.g., "prebuilt_binary")
 }
 
 // Name returns the module type name for this prebuilt_binary rule.
-//
-// This method implements the BuildRule interface. The returned name
-// must match the module type string used in .bp files (e.g., "prebuilt_binary"
-// or "cc_prebuilt_binary"). The name is used by the build system to associate
-// modules with their corresponding rule implementations.
+// This method implements the BuildRule interface.
 //
 // Returns:
 //   - The module type name string (e.g., "prebuilt_binary").
@@ -356,6 +337,9 @@ type prebuiltBinaryRule struct {
 //
 // Edge cases:
 //   - Returns empty string if typeName was not initialized (programmer error).
+//
+// Notes:
+//   - The typeName is set during rule registration and should not be modified after initialization.
 func (r *prebuiltBinaryRule) Name() string { return r.typeName }
 
 // NinjaRule returns the Ninja build rule definition for copying prebuilt executable binaries.
@@ -569,8 +553,8 @@ func (r *prebuiltBinaryRule) Desc(m *parser.Module, srcFile string) string { ret
 //   - The ext field is checked against the stem to avoid double extensions
 //     (e.g., "libfoo.a.a" is prevented).
 type prebuiltLibraryRule struct {
-	typeName string
-	ext      string
+	typeName string // Module type name as used in .bp files (e.g., "prebuilt_library")
+	ext      string // Library file extension including dot (e.g., ".a" for static, ".so" for shared)
 }
 
 // Name returns the module type name for this prebuilt_library rule.

@@ -165,13 +165,13 @@ func (r *customRule) NinjaRule(ctx RuleRenderContext) string {
 //   - Output paths are returned as-is from the "outs" property without path resolution.
 func (r *customRule) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 	name := getName(m)
-	if name == "" {
+	if name == "" { // Validate module has a name
 		return nil
 	}
 	// Custom rules can have explicit outputs (outs property).
 	// GetListProp returns a slice of strings from the "outs" property.
 	outputs := GetListProp(m, "outs")
-	if len(outputs) > 0 {
+	if len(outputs) > 0 { // Use explicit outputs if specified
 		return outputs
 	}
 	// Default output: use module name with ".out" extension.
@@ -233,10 +233,8 @@ func (r *customRule) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 	command := GetStringProp(m, "cmd")
 
 	// Validate required properties: name and cmd must be present.
-	if name == "" || command == "" {
-
+	if name == "" || command == "" { // Validate required properties: name and cmd must be present
 		return ""
-
 	}
 
 	// Get optional flags - additional arguments passed to the command.
@@ -246,10 +244,8 @@ func (r *customRule) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 	outs := r.Outputs(m, ctx)
 
 	// Validate outputs exist.
-	if len(outs) == 0 {
-
+	if len(outs) == 0 { // Validate outputs exist
 		return ""
-
 	}
 
 	// Use the first output file for $out substitution in the command.
@@ -275,10 +271,8 @@ func (r *customRule) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 	// The build edge lists sources with proper ninja escaping.
 	escapedSrcs := make([]string, len(srcs))
 
-	for i, src := range srcs {
-
+	for i, src := range srcs { // Escape all source file paths for the build edge
 		escapedSrcs[i] = ninjaEscapePath(src)
-
 	}
 
 	var edges strings.Builder
@@ -292,10 +286,8 @@ func (r *customRule) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 	edges.WriteString(fmt.Sprintf("  cmd = %s\n", strings.ReplaceAll(actualCommand, "$in", escapedInStr)))
 
 	// Write the "flags" variable binding if flags are specified.
-	if flags != "" {
-
+	if flags != "" { // Write the "flags" variable binding if flags are specified
 		edges.WriteString(fmt.Sprintf("  flags = %s\n", flags))
-
 	}
 
 	// Add trailing newline to separate from next build edge.
@@ -463,7 +455,7 @@ func (r *protoLibraryRule) NinjaRule(ctx RuleRenderContext) string {
 func (r *protoLibraryRule) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 	name := getName(m)
 	srcs := getSrcs(m)
-	if name == "" || len(srcs) == 0 {
+	if name == "" || len(srcs) == 0 { // Validate module has name and source files
 		return nil
 	}
 	// Get the base name from the first source file.
@@ -540,7 +532,7 @@ func (r *protoLibraryRule) Outputs(m *parser.Module, ctx RuleRenderContext) []st
 func (r *protoLibraryRule) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 	name := getName(m)
 	srcs := getSrcs(m)
-	if name == "" || len(srcs) == 0 {
+	if name == "" || len(srcs) == 0 { // Validate module has name and source files
 		return ""
 	}
 	// Get plugins and proto_paths from module properties.
@@ -559,7 +551,7 @@ func (r *protoLibraryRule) NinjaEdge(m *parser.Module, ctx RuleRenderContext) st
 	// Build the base protoc command line.
 	// Start with "protoc" and add plugin flags if specified.
 	protocCmd := "protoc"
-	if len(plugins) > 0 {
+	if len(plugins) > 0 { // Add --plugin flags for each specified protoc plugin
 		for _, plugin := range plugins {
 			// Escape plugin path to handle spaces and special characters.
 			protocCmd += fmt.Sprintf(" --plugin=%s", shellEscape(plugin))
@@ -570,7 +562,7 @@ func (r *protoLibraryRule) NinjaEdge(m *parser.Module, ctx RuleRenderContext) st
 
 	// Add proto_path variable for import resolution.
 	// Each proto_path becomes a --proto_path= flag for protoc.
-	if len(protoPaths) > 0 {
+	if len(protoPaths) > 0 { // Add --proto_path flags for each include directory
 		edges.WriteString(fmt.Sprintf(" proto_path = --proto_path=%s", shellEscape(protoPaths[0])))
 		for i := 1; i < len(protoPaths); i++ {
 			edges.WriteString(fmt.Sprintf(" --proto_path=%s", shellEscape(protoPaths[i])))
@@ -582,7 +574,7 @@ func (r *protoLibraryRule) NinjaEdge(m *parser.Module, ctx RuleRenderContext) st
 
 	// Add proto_path variable if present (duplicate section).
 	// This creates a second "proto_path" variable binding with different formatting.
-	if len(protoPaths) > 0 {
+	if len(protoPaths) > 0 { // Add duplicate proto_path variable with different formatting
 		edges.WriteString(fmt.Sprintf("  proto_path = --proto_path=%s", protoPaths[0]))
 		for i := 1; i < len(protoPaths); i++ {
 			edges.WriteString(fmt.Sprintf(" --proto_path=%s", protoPaths[i]))
@@ -757,7 +749,7 @@ func (r *protoGenRule) NinjaRule(ctx RuleRenderContext) string {
 //     with actual .proto source files and clearly indicates a generated artifact.
 func (r *protoGenRule) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 	name := getName(m)
-	if name == "" {
+	if name == "" { // Validate module has a name
 		return nil
 	}
 	return []string{name + "_proto"}
@@ -800,7 +792,7 @@ func (r *protoGenRule) Outputs(m *parser.Module, ctx RuleRenderContext) []string
 func (r *protoGenRule) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 	name := getName(m)
 	srcs := getSrcs(m)
-	if name == "" || len(srcs) == 0 {
+	if name == "" || len(srcs) == 0 { // Validate module has name and source files
 		return ""
 	}
 	var edges strings.Builder

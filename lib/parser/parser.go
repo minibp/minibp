@@ -27,6 +27,14 @@
 //	This allows users to fix multiple issues in a single pass.
 //	The parser uses error recovery to skip to the next definition after an error.
 //
+// Example usage:
+//
+//	r := strings.NewReader("cc_binary { name: \"myapp\" }")
+//	file, errs := ParseFile(r, "Android.bp")
+//	if len(errs) > 0 {
+//	    // Handle parse errors
+//	}
+//
 // The parser is the second stage in the Blueprint pipeline, consuming tokens
 // from the lexer and producing AST nodes that represent the syntactic structure
 // of the Blueprint source code.
@@ -95,9 +103,17 @@ type Parser struct {
 //
 // Returns:
 //   - A new Parser instance ready to parse the input
+//
+// Edge cases:
+//   - If source variadic is provided, the first element is used as source text for error reporting.
+//   - If source is not provided, line content in error messages will be empty.
+//   - The lexer is initialized with the given reader and filename.
+//
+// Note:
+//   - The parser does not take ownership of the reader; the caller is responsible for closing it.
 func NewParser(r io.Reader, fileName string, source ...string) *Parser {
 	src := ""
-	if len(source) > 0 {
+	if len(source) > 0 { // Use provided source text for error line display
 		src = source[0]
 	}
 	p := &Parser{
@@ -108,8 +124,8 @@ func NewParser(r io.Reader, fileName string, source ...string) *Parser {
 	}
 	// Initialize curToken and peekToken by advancing twice
 	// This sets up the initial state for the recursive descent parser
-	p.nextToken()
-	p.nextToken()
+	p.nextToken() // Advance to first token (fill curToken)
+	p.nextToken() // Advance to second token (fill peekToken)
 	return p
 }
 
@@ -126,9 +142,20 @@ func NewParser(r io.Reader, fileName string, source ...string) *Parser {
 //
 //	Before: curToken=A, peekToken=B, lexer.position=C
 //	After:  curToken=B, peekToken=C, lexer.position=D
+//
+// Parameters: None
+//
+// Returns: None
+//
+// Edge cases:
+//   - If the lexer has no more tokens, peekToken will be set to EOF.
+//   - Repeated calls after EOF will keep curToken and peekToken as EOF.
+//
+// Note:
+//   - All parsing functions use this method to consume tokens; no other token advancement should be used.
 func (p *Parser) nextToken() {
-	p.curToken = p.peekToken
-	p.peekToken = p.lexer.NextToken()
+	p.curToken = p.peekToken // Shift current token to previous peek token
+	p.peekToken = p.lexer.NextToken() // Fetch new peek token from lexer
 }
 
 // expect checks if the current token matches the expected type.
@@ -149,10 +176,17 @@ func (p *Parser) nextToken() {
 // Returns:
 //   - Token: The matched token if successful
 //   - error: nil if successful, otherwise an error describing the mismatch
+//
+// Edge cases:
+//   - If the current token is EOF, returns an error with position (0,0) if not set.
+//   - The error includes the file name, line, and column of the current token.
+//
+// Note:
+//   - If the token matches, it is consumed (nextToken() is called) before returning.
 func (p *Parser) expect(t TokenType) (Token, error) {
-	if p.curToken.Type == t {
+	if p.curToken.Type == t { // Current token matches expected type
 		tok := p.curToken
-		p.nextToken()
+		p.nextToken() // Consume the matched token
 		return tok, nil
 	}
 	err := errors.Syntax(fmt.Sprintf("expected %s, got %s", t, p.curToken.Type)).
@@ -174,9 +208,16 @@ func (p *Parser) expect(t TokenType) (Token, error) {
 //
 // Returns:
 //   - bool: true if the peek token matched and was consumed, false otherwise
+//
+// Edge cases:
+//   - If peekToken is EOF, returns false.
+//   - If peekToken matches, the token is consumed, advancing curToken and peekToken.
+//
+// Note:
+//   - Unlike expect(), this does not consume the token unless it matches.
 func (p *Parser) expectPeek(t TokenType) bool {
-	if p.peekToken.Type == t {
-		p.nextToken()
+	if p.peekToken.Type == t { // Peek token matches expected type
+		p.nextToken() // Consume the peek token
 		return true
 	}
 	return false
@@ -223,26 +264,27 @@ func (p *Parser) expectPeek(t TokenType) bool {
 //   - If skipToNextDefinition() can't find a recovery point, parsing stops at EOF.
 //   - Lexer errors are only reported when there are no parser errors
 //     (to avoid cascading error messages for the same issue).
+//
+// Note:
+//   - The returned File may contain partially parsed definitions if errors occurred.
 func (p *Parser) Parse() (*File, []error) {
 	file := &File{Name: p.fileName}
 
 	// Parse definitions until EOF
 	// Each definition is either a module or an assignment
-	for p.curToken.Type != EOF {
+	for p.curToken.Type != EOF { // Parse until end of file
 		def, err := p.parseDefinition()
-		if err != nil {
-			// Collect error but continue parsing to find more issues
+		if err != nil { // Collect error and perform recovery
 			p.errors = append(p.errors, err)
 			p.skipToNextDefinition()
-		} else if def != nil {
-			// Add successfully parsed definition to file
+		} else if def != nil { // Successfully parsed definition
 			file.Defs = append(file.Defs, def)
 		}
 	}
 
 	// Include lexer errors in the final error list
 	// This captures issues like invalid characters detected during scanning
-	if len(p.errors) == 0 {
+	if len(p.errors) == 0 { // Only add lexer errors if no parser errors occurred
 		p.errors = append(p.errors, p.lexer.Errors()...)
 	}
 
@@ -278,8 +320,15 @@ func (p *Parser) Parse() (*File, []error) {
 //   - If no IDENT token exists before EOF, the function stops at EOF.
 //   - The function does not consume the IDENT token it finds; it leaves
 //     the parser positioned at that token for the next parse attempt.
+//
+// Parameters: None
+//
+// Returns: None
+//
+// Note:
+//   - This function only moves forward; it never backtracks or re-parses tokens.
 func (p *Parser) skipToNextDefinition() {
-	for p.curToken.Type != EOF && p.curToken.Type != IDENT {
+	for p.curToken.Type != EOF && p.curToken.Type != IDENT { // Skip until EOF or IDENT (start of definition)
 		p.nextToken()
 	}
 }
@@ -324,8 +373,11 @@ func (p *Parser) skipToNextDefinition() {
 //	cc_binary { ... }     -> parseModule (IDENT + LBRACE)
 //	my_var = "value"      -> parseAssignment (IDENT + ASSIGN)
 //	my_list += ["item"]   -> parseAssignment (IDENT + PLUSEQ)
+//
+// Note:
+//   - This function consumes the IDENT token before checking the next token.
 func (p *Parser) parseDefinition() (Definition, error) {
-	if p.curToken.Type != IDENT {
+	if p.curToken.Type != IDENT { // First token must be identifier (module type or variable name)
 		return nil, errors.Syntax(fmt.Sprintf("expected identifier, got %s", p.curToken.Type)).
 			WithLocation(p.fileName, p.curToken.Pos.Line, p.curToken.Pos.Column).
 			WithContent(p.lineContent(p.curToken.Pos.Line)).
@@ -337,7 +389,7 @@ func (p *Parser) parseDefinition() (Definition, error) {
 	name := p.curToken.Literal
 	namePos := p.curToken.Pos
 
-	p.nextToken()
+	p.nextToken() // Consume the IDENT token
 
 	// Decide what kind of definition based on the token after the name
 	switch p.curToken.Type {
@@ -398,10 +450,13 @@ func (p *Parser) parseDefinition() (Definition, error) {
 //	    srcs: ["main.c"],                    // regular property
 //	    arch: { arm: { srcs: ["arm.c"] } }  // special property (extracted)
 //	}
+//
+// Note:
+//   - Special properties are removed from the main property list and stored separately.
 func (p *Parser) parseModule(typeName string, typePos scanner.Position) (*Module, error) {
 	// Current token is LBRACE - consume the opening brace
 	lbracePos := p.curToken.Pos
-	p.nextToken()
+	p.nextToken() // Consume opening brace
 
 	// Parse the property list inside the braces
 	propertyList, rbracePos, err := p.parsePropertyList()

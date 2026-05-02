@@ -50,12 +50,12 @@ import "minibp/lib/parser"
 func GetStringProp(m *parser.Module, name string) string {
 	// Fast path: no properties defined at all
 	if m.Map == nil {
-		return ""
+		return "" // No properties defined, return empty
 	}
 	// O(1) lookup via property map cache
-	if prop, ok := m.Map.GetPropMap()[name]; ok {
+	if prop, ok := m.Map.GetPropMap()[name]; ok { // Found property by name
 		// Only match String type; list, bool, map types are ignored
-		if s, ok := prop.Value.(*parser.String); ok {
+		if s, ok := prop.Value.(*parser.String); ok { // Ensure property is String type
 			return s.Value
 		}
 	}
@@ -78,7 +78,7 @@ func GetStringProp(m *parser.Module, name string) string {
 //     When provided, the evaluator processes the property value through its
 //     entire evaluation pipeline, which includes: variable substitution
 //     (${VAR} or $VAR), select() resolution based on config, and builtin
-//     function evaluation (如 path()).
+//     function evaluation (e.g., path()).
 //
 // Returns:
 //   - The evaluated string value if found and of type string, otherwise
@@ -88,18 +88,18 @@ func GetStringProp(m *parser.Module, name string) string {
 func GetStringPropEval(m *parser.Module, name string, eval *parser.Evaluator) string {
 	// Fast path: no properties defined
 	if m.Map == nil {
-		return ""
+		return "" // No properties defined, return empty
 	}
 	// O(1) lookup via property map cache
-	if prop, ok := m.Map.GetPropMap()[name]; ok {
+	if prop, ok := m.Map.GetPropMap()[name]; ok { // Found property
 		// Only match String type
-		if s, ok := prop.Value.(*parser.String); ok {
+		if s, ok := prop.Value.(*parser.String); ok { // Check if raw value is String type
 			// Evaluate if evaluator provided, otherwise return raw value
-			if eval != nil {
+			if eval != nil { // Evaluate if evaluator provided
 				val := eval.Eval(prop.Value)
 				// Check if evaluation returned a string; if eval fails,
 				// type assertion fails and we fall through to return empty
-				if s, ok := val.(string); ok {
+				if s, ok := val.(string); ok { // Check evaluation returned string
 					return s
 				}
 			} else {
@@ -132,16 +132,16 @@ func GetStringPropEval(m *parser.Module, name string, eval *parser.Evaluator) st
 func GetListProp(m *parser.Module, name string) []string {
 	// Fast path: no properties defined
 	if m.Map == nil {
-		return nil
+		return nil // No properties, return nil
 	}
 	// O(1) lookup via property map cache
-	if prop, ok := m.Map.GetPropMap()[name]; ok {
+	if prop, ok := m.Map.GetPropMap()[name]; ok { // Found property
 		// Must be List type
-		if l, ok := prop.Value.(*parser.List); ok {
+		if l, ok := prop.Value.(*parser.List); ok { // Ensure List type
 			var result []string
 			// Collect only string elements; other types silently ignored
-			for _, v := range l.Values {
-				if s, ok := v.(*parser.String); ok {
+			for _, v := range l.Values { // Iterate through list values
+				if s, ok := v.(*parser.String); ok { // Collect only string elements
 					result = append(result, s.Value)
 				}
 			}
@@ -165,7 +165,7 @@ func GetListProp(m *parser.Module, name string) []string {
 //   - eval: Optional evaluator for resolving variables. If nil, raw strings are
 //     extracted without evaluation (equivalent to GetListProp). When provided,
 //     each string element within the list is passed through the evaluator,
-//     enabling variable substitution (如 "${VAR}"), select() resolution, and
+//     enabling variable substitution (e.g., "${VAR}"), select() resolution, and
 //     path() function evaluation within list items.
 //
 // Returns:
@@ -175,20 +175,20 @@ func GetListProp(m *parser.Module, name string) []string {
 func GetListPropEval(m *parser.Module, name string, eval *parser.Evaluator) []string {
 	// Fast path: no properties defined
 	if m.Map == nil {
-		return nil
+		return nil // No properties, return nil
 	}
 	// O(1) lookup via property map cache
-	if prop, ok := m.Map.GetPropMap()[name]; ok {
+	if prop, ok := m.Map.GetPropMap()[name]; ok { // Found property
 		// Must be List type
-		if l, ok := prop.Value.(*parser.List); ok {
+		if l, ok := prop.Value.(*parser.List); ok { // Ensure List type
 			// Use efficient batch evaluation if evaluator provided
-			if eval != nil {
+			if eval != nil { // Use batch evaluation if available
 				return parser.EvalToStringList(l, eval)
 			}
 			// Otherwise extract raw strings only
 			var result []string
-			for _, v := range l.Values {
-				if s, ok := v.(*parser.String); ok {
+			for _, v := range l.Values { // Iterate through list values
+				if s, ok := v.(*parser.String); ok { // Collect string elements
 					result = append(result, s.Value)
 				}
 			}
@@ -233,19 +233,19 @@ func GetListPropEval(m *parser.Module, name string, eval *parser.Evaluator) []st
 func GetBoolProp(m *parser.Module, name string, eval *parser.Evaluator) bool {
 	// Fast path: no properties defined
 	if m.Map == nil {
-		return false
+		return false // No properties defined, return false
 	}
 	// O(1) lookup via property map cache
-	if prop, ok := m.Map.GetPropMap()[name]; ok {
+	if prop, ok := m.Map.GetPropMap()[name]; ok { // Found property
 		// First check for literal Bool type (most common for defaults)
-		if b, ok := prop.Value.(*parser.Bool); ok {
+		if b, ok := prop.Value.(*parser.Bool); ok { // Check literal Bool type first
 			return b.Value
 		}
 		// If evaluator provided, try evaluating string expressions
 		// This handles cases like: enabled: "!srcs" or enabled: "${IS_ENABLED}"
-		if eval != nil {
+		if eval != nil { // Evaluate expression if evaluator provided
 			val := eval.Eval(prop.Value)
-			if b, ok := val.(bool); ok {
+			if b, ok := val.(bool); ok { // Check evaluation returned bool
 				return b
 			}
 		}

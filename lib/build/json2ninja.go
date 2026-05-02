@@ -97,7 +97,7 @@ func GenerateFromBuildJSON(
 	modules, err := CollectModulesWithNames(allDefs, eval, opts, func(m *parser.Module, key string) string {
 		return props.GetStringPropEval(m, key, eval)
 	})
-	if err != nil {
+	if err != nil { // module collection failed
 		return 0, err
 	}
 
@@ -132,7 +132,7 @@ func GenerateFromBuildJSON(
 	// This invokes the generator to write all build rules, build statements, and
 	// variables to the output file. If generation fails, the incomplete file is
 	// removed to prevent stale builds. On success, build.ninja is ready for Ninja.
-	if err := generateNinjaFile(outputPath, gen); err != nil {
+	if err := generateNinjaFile(outputPath, gen); err != nil { // ninja file generation failed
 		return 0, err
 	}
 	return len(modules), nil
@@ -256,7 +256,7 @@ func generateNinjaFile(path string, gen interface{ Generate(io.Writer) error }) 
 	// If the file already exists, it will be truncated to zero length.
 	// This ensures no stale content remains from a previous build.ninja.
 	out, err := os.Create(path)
-	if err != nil {
+	if err != nil { // failed to create output file
 		// Failed to create output file - likely permission or disk space issue.
 		// Use Config error for build output issues with proper context.
 		return errors.Config(fmt.Sprintf("failed to create output file: %s", path)).
@@ -277,12 +277,12 @@ func generateNinjaFile(path string, gen interface{ Generate(io.Writer) error }) 
 	// Must capture close error separately to handle it correctly below.
 	closeErr := out.Close()
 
-	if genErr != nil {
+	if genErr != nil { // generation failed
 		// Generation failed: remove the incomplete output file to prevent stale builds.
 		// A partial build.ninja could cause confusing "missing rule" or "parse error" messages.
 		// Removing it ensures Ninja will either regenerate or fail with a clear error.
 		closeErr = os.Remove(path)
-		if closeErr != nil {
+		if closeErr != nil { // both generation and removal failed
 			// Both generation and removal failed; report both errors.
 			return errors.Config("ninja generation failed and could not remove incomplete file").
 				WithCause(genErr).
@@ -295,7 +295,7 @@ func generateNinjaFile(path string, gen interface{ Generate(io.Writer) error }) 
 
 	// Generation succeeded but close may have failed (e.g., flush error).
 	// Report the close error so the caller knows the file may be incomplete.
-	if closeErr != nil {
+	if closeErr != nil { // close failed after successful generation
 		return errors.Config("failed to close output file after successful generation").
 			WithCause(closeErr).
 			WithSuggestion("Check disk space and file system health")

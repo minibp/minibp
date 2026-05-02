@@ -1,14 +1,13 @@
-// Package module provides the module type system for minibp build rules.
-// This file defines the various module types (C/C++, Go, Java, Proto, Custom)
-// and helper functions for extracting module properties from AST.
+// Package module provides the module type system for minibp build rules,
+// defining the various module types (C/C++, Go, Java, Proto, Custom) and
+// helper functions for extracting module properties from AST.
 //
-// Description:
-// The module type system uses a factory pattern where each module type has a
+// This package uses a factory pattern where each module type has a
 // corresponding factory struct that knows how to parse AST properties and create
 // the appropriate Module struct. This file contains both the property extraction
 // helpers and all built-in module type definitions.
 //
-// Design decisions:
+// Key design decisions:
 //   - Property extraction helpers: Provide reusable functions for extracting common
 //     property types from AST, handling evaluation and type conversion.
 //   - Factory implementations: Each module type has a factory that knows how
@@ -17,7 +16,7 @@
 //   - Evaluation: Properties can contain expressions (variables, select())
 //     that are evaluated before being stored in the module.
 //
-// Property extraction functions:
+// Property extraction functions provided:
 //   - extractStringList: Extract string arrays from AST properties
 //   - extractString: Extract single string values
 //   - extractAllProps: Extract all properties as a map
@@ -40,24 +39,19 @@ import (
 
 // extractStringList extracts a list of string values from an AST map property.
 // It handles both literal string values and expressions that can be evaluated.
-//
-// Description:
 // This is one of the primary property extraction functions, used for properties
 // that contain arrays of file paths or other string values (e.g., srcs, deps,
 // cflags, includes). The function iterates through the AST properties looking
 // for a property matching the given key. If found, it expects a parser.List
 // containing string values.
 //
-// How it works:
-// 1. Return empty slice immediately if ast is nil (defensive check)
-// 2. Iterate through ast.Properties to find property with matching name
-// 3. If property value is a parser.List, iterate through its values
-// 4. For each value:
+// The function returns empty slice immediately if ast is nil (defensive check),
+// then iterates through ast.Properties to find property with matching name.
+// If property value is a parser.List, iterates through its values:
 //   - If it's a literal parser.String, append its Value directly
 //   - If it's an expression and eval is provided, evaluate it first
 //   - Only append if evaluation produces a string
-//
-// 5. Return empty slice if property not found or not a list
+// Returns empty slice if property not found or not a list.
 //
 // Parameters:
 //   - ast: The parser.Map containing the module properties (may be nil)
@@ -75,21 +69,20 @@ import (
 //   - Expression evaluation returns non-string: skipped silently
 //   - Empty list property: returns empty (not nil) slice
 func extractStringList(ast *parser.Map, key string, eval *parser.Evaluator) []string {
-	if ast == nil {
+	if ast == nil { // Defensive check: return empty slice for nil AST
 		return []string{}
 	}
 
-	for _, prop := range ast.Properties {
-		if prop.Name == key {
-			if list, ok := prop.Value.(*parser.List); ok {
+	for _, prop := range ast.Properties { // Iterate through AST properties
+		if prop.Name == key { // Found matching property
+			if list, ok := prop.Value.(*parser.List); ok { // Property is a list
 				result := make([]string, 0, len(list.Values))
-				for _, v := range list.Values {
-					if s, ok := v.(*parser.String); ok {
+				for _, v := range list.Values { // Process each list element
+					if s, ok := v.(*parser.String); ok { // Literal string value
 						result = append(result, s.Value)
-					} else if eval != nil {
-						// Expression evaluation for variables, select(), etc.
+					} else if eval != nil { // Evaluate expression (variables, select(), etc.)
 						val := eval.Eval(v)
-						if s, ok := val.(string); ok {
+						if s, ok := val.(string); ok { // Evaluation produced a string
 							result = append(result, s)
 						}
 					}
@@ -103,17 +96,14 @@ func extractStringList(ast *parser.Map, key string, eval *parser.Evaluator) []st
 
 // extractString extracts a single string value from an AST map property.
 // It handles both literal string values and expressions that can be evaluated.
-//
-// Description:
 // This function is used for properties that contain single string values,
 // such as module names, paths, and identifiers (e.g., "name", "pkg", "main_class").
 //
-// How it works:
-// 1. Return empty string immediately if ast is nil (defensive check)
-// 2. Iterate through ast.Properties to find property with matching name
-// 3. First try direct type assertion to parser.String (fast path for literals)
-// 4. If not a string, try evaluating via eval if provided
-// 5. Return the string result or empty string if not found
+// The function returns empty string immediately if ast is nil (defensive check),
+// then iterates through ast.Properties to find property with matching name.
+// First tries direct type assertion to parser.String (fast path for literals).
+// If not a string, tries evaluating via eval if provided.
+// Returns the string result or empty string if not found.
 //
 // Parameters:
 //   - ast: The parser.Map containing the module properties (may be nil)
@@ -130,19 +120,19 @@ func extractStringList(ast *parser.Map, key string, eval *parser.Evaluator) []st
 //   - Expression evaluates to non-string: returns empty string
 //   - Property not found: returns empty string (not error)
 func extractString(ast *parser.Map, key string, eval *parser.Evaluator) string {
-	if ast == nil {
+	if ast == nil { // Defensive check: return empty string for nil AST
 		return ""
 	}
-	for _, prop := range ast.Properties {
-		if prop.Name == key {
+	for _, prop := range ast.Properties { // Iterate through AST properties
+		if prop.Name == key { // Found matching property
 			// Fast path: direct string literal
-			if s, ok := prop.Value.(*parser.String); ok {
+			if s, ok := prop.Value.(*parser.String); ok { // Literal string value
 				return s.Value
 			}
 			// Slow path: evaluate expression (for variables, select(), etc.)
-			if eval != nil {
+			if eval != nil { // Evaluator provided, try expression evaluation
 				val := eval.Eval(prop.Value)
-				if s, ok := val.(string); ok {
+				if s, ok := val.(string); ok { // Evaluation produced a string
 					return s
 				}
 			}
@@ -155,7 +145,6 @@ func extractString(ast *parser.Map, key string, eval *parser.Evaluator) string {
 // as a Go map. This is used to capture all module properties beyond the
 // built-in ones, allowing custom properties to be accessed generically.
 //
-// Description:
 // Each property value is processed through extractPropValue to handle various
 // expression types (strings, ints, bools, lists, maps, variables).
 // The function creates a new map and populates it with all properties from
@@ -180,10 +169,10 @@ func extractString(ast *parser.Map, key string, eval *parser.Evaluator) string {
 //   - Other types -> formatted string via fmt.Sprintf
 func extractAllProps(ast *parser.Map, eval *parser.Evaluator) map[string]interface{} {
 	props := make(map[string]interface{})
-	if ast == nil {
+	if ast == nil { // Defensive check: return empty map for nil AST
 		return props
 	}
-	for _, prop := range ast.Properties {
+	for _, prop := range ast.Properties { // Process each property
 		props[prop.Name] = extractPropValue(prop.Value, eval)
 	}
 	return props
@@ -193,17 +182,9 @@ func extractAllProps(ast *parser.Map, eval *parser.Evaluator) map[string]interfa
 // This is the core type conversion function for property values, handling
 // the translation from AST nodes to Go types used throughout the build system.
 //
-// Description:
 // The function first attempts evaluation if an evaluator is provided,
 // then falls back to type-specific conversion for unevaluated expressions.
 // This allows variables and expressions to be resolved during property extraction.
-//
-// How it works:
-//  1. First try evaluation if evaluator provided - this resolves variables,
-//     select() expressions, etc.
-//  2. If evaluation returns nil or no evaluator, fall back to type-specific conversion
-//  3. For known types (String, Int64, Bool, List, Map, Variable), convert directly
-//  4. For unknown types, use fmt.Sprintf as fallback
 //
 // Conversion rules:
 //   - parser.String: Returns the string Value directly
@@ -232,8 +213,8 @@ func extractAllProps(ast *parser.Map, eval *parser.Evaluator) map[string]interfa
 func extractPropValue(expr parser.Expression, eval *parser.Evaluator) interface{} {
 	// First try evaluation if evaluator provided
 	// This resolves variables, select() expressions, etc.
-	if eval != nil {
-		if val := eval.Eval(expr); val != nil {
+	if eval != nil { // Evaluator provided, attempt expression evaluation
+		if val := eval.Eval(expr); val != nil { // Evaluation succeeded
 			return val
 		}
 	}
@@ -249,14 +230,14 @@ func extractPropValue(expr parser.Expression, eval *parser.Evaluator) interface{
 	case *parser.List:
 		// Recursively convert list elements
 		items := make([]interface{}, 0, len(v.Values))
-		for _, item := range v.Values {
+		for _, item := range v.Values { // Process each list element
 			items = append(items, extractPropValue(item, eval))
 		}
 		return items
 	case *parser.Map:
 		// Recursively convert map properties
 		m := make(map[string]interface{}, len(v.Properties))
-		for _, prop := range v.Properties {
+		for _, prop := range v.Properties { // Process each map property
 			m[prop.Name] = extractPropValue(prop.Value, eval)
 		}
 		return m
@@ -272,13 +253,11 @@ func extractPropValue(expr parser.Expression, eval *parser.Evaluator) interface{
 // collectDeps collects all dependencies from an AST module by examining multiple
 // dependency-related properties and deduplicating the results.
 //
-// Description:
 // The function looks at three standard dependency property keys:
 //   - "deps": Direct module dependencies (general dependencies)
 //   - "shared_libs": Shared library dependencies (for runtime linking)
 //   - "header_libs": Header library dependencies (for C/C++ include paths)
 //
-// How it works:
 // Uses a map-based approach for O(n) deduplication complexity where
 // n is the total number of dependency entries across all properties.
 //
@@ -308,9 +287,9 @@ func collectDeps(ast *parser.Map, eval *parser.Evaluator) []string {
 	depKeys := []string{"deps", "shared_libs", "header_libs"}
 	seen := make(map[string]bool)
 	var deps []string
-	for _, key := range depKeys {
-		for _, dep := range extractStringList(ast, key, eval) {
-			if !seen[dep] {
+	for _, key := range depKeys { // Check each dependency property key
+		for _, dep := range extractStringList(ast, key, eval) { // Process each dependency
+			if !seen[dep] { // New dependency, add to result
 				seen[dep] = true
 				deps = append(deps, dep)
 			}
@@ -323,12 +302,10 @@ func collectDeps(ast *parser.Map, eval *parser.Evaluator) []string {
 // This is the common foundation for all module types, extracting
 // the name, type, sources, dependencies, and all properties.
 //
-// Description:
 // The function acts as a factory for creating the base module
 // that all specialized module types embed via composition.
 // It's the first step in creating any module type instance.
 //
-// How it works:
 // Extracts all common fields from the AST and creates a BaseModule struct.
 // Properties extracted:
 //   - name: From the "name" property via extractString
@@ -349,11 +326,11 @@ func collectDeps(ast *parser.Map, eval *parser.Evaluator) []string {
 //   - Fields are always populated (empty strings/slices for missing properties)
 func baseModuleFromAST(ast *parser.Module, eval *parser.Evaluator) BaseModule {
 	return BaseModule{
-		Name_:  extractString(ast.Map, "name", eval),
-		Type_:  ast.Type,
-		Srcs_:  extractStringList(ast.Map, "srcs", eval),
-		Deps_:  collectDeps(ast.Map, eval),
-		Props_: extractAllProps(ast.Map, eval),
+		Name_:  extractString(ast.Map, "name", eval),                        // Module name from "name" property
+		Type_:  ast.Type,                                                    // Module type from AST
+		Srcs_:  extractStringList(ast.Map, "srcs", eval),                   // Source files from "srcs"
+		Deps_:  collectDeps(ast.Map, eval),                                 // Dependencies from deps/shared_libs/header_libs
+		Props_: extractAllProps(ast.Map, eval),                              // All other properties
 	}
 }
 

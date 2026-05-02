@@ -80,10 +80,15 @@ import (
 type filegroup struct{}
 
 // Name returns the unique identifier for the filegroup build rule.
-//
 // This method is part of the BuildRule interface implementation.
-// The returned string "filegroup" must match the module type name used in Blueprint files.
-// For example: filegroup { name: "my_files", srcs: ["a.txt", "b.txt"] }
+//
+// Returns:
+//   - The string "filegroup" which must match the module type name in Blueprint files.
+//     Example module definition: filegroup { name: "my_files", srcs: ["a.txt", "b.txt"] }
+//
+// Edge cases:
+//   - Returns empty string only if the typeName field is uninitialized (programmer error).
+//     In normal operation, always returns "filegroup".
 func (r *filegroup) Name() string { return "filegroup" }
 
 // NinjaRule returns the Ninja rule definition for copying files.
@@ -235,14 +240,12 @@ func (r *filegroup) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 	// Retrieve the list of source files from the module's "srcs" property.
 	// Returns nil or empty slice if no sources are defined.
 	srcs := getSrcs(m)
-	if len(srcs) == 0 {
-		// No sources to copy - return empty string to indicate no build edges.
+	if len(srcs) == 0 { // No sources to copy, return empty string to indicate no build edges
 		return ""
 	}
 	// Get the module name which will be used as the output directory name.
 	name := getName(m)
-	if name == "" {
-		// No name means we can't construct valid output paths.
+	if name == "" { // No module name, cannot construct valid output paths
 		return ""
 	}
 
@@ -250,20 +253,10 @@ func (r *filegroup) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 	// Build edges are accumulated and returned as a single string.
 	var edges strings.Builder
 	for _, src := range srcs {
-		// Sanitize the module name to prevent path traversal attacks.
-		// For example, if name is "../../etc", it would be sanitized to "etc".
-		safeName := pathutil.SanitizePath(name)
-		// Extract and sanitize the basename of the source file.
-		// We only use the basename to avoid recreating directory structures
-		// in the output; the module name provides the directory namespace.
-		safeSrc := pathutil.SanitizePath(filepath.Base(src))
-		// Construct the output path: {sanitized_name}/{sanitized_basename}.
-		// filepath.Join ensures correct path separator for the current OS.
-		out := filepath.Join(safeName, safeSrc)
-		// Generate a Ninja build edge for this file copy operation.
-		// Format: "build {output}: filegroup_copy {input}"
-		// The "filegroup_copy" rule must be defined in NinjaRule().
-		edges.WriteString(fmt.Sprintf("build %s: filegroup_copy %s\n", out, src))
+		safeName := pathutil.SanitizePath(name) // Sanitize module name to prevent path traversal attacks
+		safeSrc := pathutil.SanitizePath(filepath.Base(src)) // Sanitize source basename, strip directory components
+		out := filepath.Join(safeName, safeSrc) // Construct output path: {module_name}/{source_basename}
+		edges.WriteString(fmt.Sprintf("build %s: filegroup_copy %s\n", out, src)) // Generate Ninja build edge for file copy
 	}
 	return edges.String()
 }
@@ -335,10 +328,15 @@ func (r *filegroup) Desc(m *parser.Module, srcFile string) string {
 type filegroupStatic struct{}
 
 // Name returns the unique identifier for the filegroup_static build rule.
-//
 // This method is part of the BuildRule interface implementation.
-// The returned string "filegroup_static" must match the module type name used in Blueprint files.
-// For example: filegroup_static { name: "my_bundle", srcs: ["a.txt", "b.txt"] }
+//
+// Returns:
+//   - The string "filegroup_static" which must match the module type name in Blueprint files.
+//     Example module definition: filegroup_static { name: "my_bundle", srcs: ["a.txt", "b.txt"] }
+//
+// Edge cases:
+//   - Returns empty string only if the typeName field is uninitialized (programmer error).
+//     In normal operation, always returns "filegroup_static".
 func (r *filegroupStatic) Name() string { return "filegroup_static" }
 
 // NinjaRule returns the Ninja rule definition for static file groups.
@@ -467,27 +465,18 @@ func (r *filegroupStatic) Outputs(m *parser.Module, ctx RuleRenderContext) []str
 // correctly concatenate files. The cp command behavior with multiple inputs varies
 // by system. A proper concatenation command (like "cat" on Unix) should be used.
 func (r *filegroupStatic) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
-	// Retrieve the list of source files from the module's "srcs" property.
 	srcs := getSrcs(m)
-	if len(srcs) == 0 {
-		// No sources to concatenate - return empty string to indicate no build edges.
+	if len(srcs) == 0 { // No sources to concatenate, return empty string
 		return ""
 	}
-	// Get the module name which will be used as the output filename base.
 	name := getName(m)
-	if name == "" {
-		// No name means we can't construct a valid output path.
+	if name == "" { // No module name, cannot construct valid output path
 		return ""
 	}
 
-	// Use strings.Builder for efficient string concatenation.
 	var edges strings.Builder
-	// Construct the output filename with ".static" extension.
-	out := name + ".static"
-	// Generate a single Ninja build edge with all sources as inputs.
-	// strings.Join(srcs, " ") creates a space-separated list of all source files.
-	// Ninja will substitute $in with this list when executing the command.
-	edges.WriteString(fmt.Sprintf("build %s: filegroup_static %s\n", out, strings.Join(srcs, " ")))
+	out := name + ".static" // Construct output filename with ".static" extension
+	edges.WriteString(fmt.Sprintf("build %s: filegroup_static %s\n", out, strings.Join(srcs, " "))) // Generate single build edge with all sources
 	return edges.String()
 }
 

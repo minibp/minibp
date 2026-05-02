@@ -212,14 +212,11 @@ func (r *genrule) NinjaRule(ctx RuleRenderContext) string {
 //	// Outputs: ["simple_rule.out"]
 func (r *genrule) Outputs(m *parser.Module, ctx RuleRenderContext) []string {
 	name := getName(m)
-	if name == "" {
-		// Module has no name - invalid or malformed module.
-		// Return nil to signal that no outputs can be determined.
+	if name == "" { // Validate module has a name
 		return nil
 	}
 	outs := GetListProp(m, "outs")
-	if len(outs) > 0 {
-		// Use explicitly specified output files from "outs" property.
+	if len(outs) > 0 { // Use explicitly specified output files from "outs" property
 		return outs
 	}
 	// Default output if no outs specified.
@@ -312,17 +309,14 @@ func (r *genrule) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 	// Validate required fields before proceeding.
 	// Both name and cmd are essential: name identifies the module for debugging,
 	// and cmd is the actual command that produces the outputs.
-	if name == "" || cmd == "" {
-		// Missing required property - cannot generate a valid edge.
-		// Return empty string to skip this module silently.
+	if name == "" || cmd == "" { // Validate required fields before proceeding
 		return ""
 	}
 
 	// Get output files for this genrule.
 	// Uses the Outputs() method which checks "outs" property or generates default.
 	outs := r.Outputs(m, ctx)
-	if len(outs) == 0 {
-		// No outputs defined - invalid genrule, cannot generate edge.
+	if len(outs) == 0 { // Validate outputs are defined
 		return ""
 	}
 
@@ -359,7 +353,7 @@ func (r *genrule) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 	// Add order-only dependencies (tool_files, deps) after the pipe (|).
 	// Order-only deps don't affect whether the output is rebuilt,
 	// but they must exist before the command runs.
-	if len(allDeps) > 0 {
+	if len(allDeps) > 0 { // Add order-only dependencies (tool_files, deps) after the pipe (|)
 		edges.WriteString(fmt.Sprintf(" | %s", strings.Join(allDeps, " ")))
 	}
 	edges.WriteString("\n")
