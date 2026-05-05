@@ -32,6 +32,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -292,13 +293,16 @@ func (m *Manager) hashFile(path string) (string, error) {
 		return "", fmt.Errorf("invalid path: %s", path)
 	}
 
-	data, err := pathutil.ReadFileSafely(safePath, 10<<20)
+	f, err := os.Open(safePath)
 	if err != nil {
-		return "", fmt.Errorf("read file for hash: %w", err)
+		return "", fmt.Errorf("open file for hash: %w", err)
 	}
+	defer f.Close()
 
 	h := sha256.New()
-	h.Write(data)
+	if _, err := io.Copy(h, f); err != nil {
+		return "", fmt.Errorf("hash file: %w", err)
+	}
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 

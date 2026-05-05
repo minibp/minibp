@@ -358,13 +358,16 @@ func (h *Hasher) hashFile(path string) (string, error) {
 		return "", fmt.Errorf("invalid path: %s", path)
 	}
 
-	data, err := pathutil.ReadFileSafely(safePath, 10<<20)
+	f, err := os.Open(safePath)
 	if err != nil {
 		return "", err
 	}
+	defer f.Close()
 
 	fileHasher := sha256.New()
-	fileHasher.Write(data)
+	if _, err := io.Copy(fileHasher, f); err != nil {
+		return "", err
+	}
 	hash := hex.EncodeToString(fileHasher.Sum(nil))
 	return fmt.Sprintf("file:%s;hash:%s;", path, hash), nil
 }
