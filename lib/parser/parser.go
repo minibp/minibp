@@ -154,7 +154,7 @@ func NewParser(r io.Reader, fileName string, source ...string) *Parser {
 // Note:
 //   - All parsing functions use this method to consume tokens; no other token advancement should be used.
 func (p *Parser) nextToken() {
-	p.curToken = p.peekToken // Shift current token to previous peek token
+	p.curToken = p.peekToken          // Shift current token to previous peek token
 	p.peekToken = p.lexer.NextToken() // Fetch new peek token from lexer
 }
 

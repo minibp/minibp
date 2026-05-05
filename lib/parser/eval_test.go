@@ -24,7 +24,9 @@ cc_binary {
 	}
 
 	eval := NewEvaluator()
-	eval.ProcessAssignments(file)
+	if err := eval.ProcessAssignments(file); err != nil {
+		t.Fatalf("ProcessAssignments error: %v", err)
+	}
 
 	mod := file.Defs[1].(*Module)
 	name := EvalToString(findProp(mod.Map, "name").Value, eval)
@@ -51,7 +53,9 @@ cc_binary {
 	}
 
 	eval := NewEvaluator()
-	eval.ProcessAssignments(file)
+	if err := eval.ProcessAssignments(file); err != nil {
+		t.Fatalf("ProcessAssignments error: %v", err)
+	}
 
 	if val, ok := eval.vars["flags"]; ok {
 		s, ok := val.(string)
@@ -203,7 +207,9 @@ cc_library {
 	}
 
 	eval := NewEvaluator()
-	eval.ProcessAssignments(file)
+	if err := eval.ProcessAssignments(file); err != nil {
+		t.Fatalf("ProcessAssignments error: %v", err)
+	}
 
 	mod := file.Defs[1].(*Module)
 	cflagsProp := findProp(mod.Map, "cflags")
@@ -286,7 +292,9 @@ full = "${base}_static"`
 	}
 
 	eval := NewEvaluator()
-	eval.ProcessAssignments(file)
+	if err := eval.ProcessAssignments(file); err != nil {
+		t.Fatalf("ProcessAssignments error: %v", err)
+	}
 
 	val, ok := eval.vars["full"].(string)
 	if !ok {
@@ -314,7 +322,9 @@ cc_binary {
 	}
 
 	eval := NewEvaluator()
-	eval.ProcessAssignments(file)
+	if err := eval.ProcessAssignments(file); err != nil {
+		t.Fatalf("ProcessAssignments error: %v", err)
+	}
 
 	mod := file.Defs[1].(*Module)
 	name := EvalToString(findProp(mod.Map, "name").Value, eval)
@@ -351,7 +361,9 @@ func TestEvaluatorIntegerAddition(t *testing.T) {
 	}
 
 	eval := NewEvaluator()
-	eval.ProcessAssignments(file)
+	if err := eval.ProcessAssignments(file); err != nil {
+		t.Fatalf("ProcessAssignments error: %v", err)
+	}
 
 	val, ok := eval.vars["sum"].(int64)
 	if !ok {
@@ -376,7 +388,9 @@ srcs += ["b.c", "c.c"]`
 	}
 
 	eval := NewEvaluator()
-	eval.ProcessAssignments(file)
+	if err := eval.ProcessAssignments(file); err != nil {
+		t.Fatalf("ProcessAssignments error: %v", err)
+	}
 
 	val, ok := eval.vars["srcs"].([]interface{})
 	if !ok {
@@ -408,7 +422,9 @@ srcs += "b.c"`
 	}
 
 	eval := NewEvaluator()
-	eval.ProcessAssignments(file)
+	if err := eval.ProcessAssignments(file); err != nil {
+		t.Fatalf("ProcessAssignments error: %v", err)
+	}
 
 	val, ok := eval.vars["srcs"].([]interface{})
 	if !ok {

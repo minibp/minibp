@@ -95,24 +95,24 @@ type BuildRule interface {
 //   - Includes both tool paths and flags for complete command generation
 //   - Supports cross-compilation via GOOS/GOARCH and Sysroot
 type RuleRenderContext struct {
-	CC             string // C compiler command (e.g., "gcc")
-	CXX            string // C++ compiler command (e.g., "g++")
-	AR             string // Static library archiver (e.g., "ar")
-	LD             string // Linker command; empty uses CC/CXX for linking
-	ArchSuffix     string // Architecture suffix for outputs (e.g., "_arm64")
-	CFlags         string // Global C/C++ compiler flags
-	LdFlags        string // Global linker flags
-	Sysroot        string // Cross-compilation sysroot path
-	Ccache         string // Path to ccache binary (empty if not used)
-	Lto            string // Default LTO mode ("full", "thin", or "")
-	GOOS           string // Go target OS (e.g., "linux")
-	GOARCH         string // Go target architecture (e.g., "amd64")
-	PathPrefix     string // Prefix for dependency file paths
+	CC             string                    // C compiler command (e.g., "gcc")
+	CXX            string                    // C++ compiler command (e.g., "g++")
+	AR             string                    // Static library archiver (e.g., "ar")
+	LD             string                    // Linker command; empty uses CC/CXX for linking
+	ArchSuffix     string                    // Architecture suffix for outputs (e.g., "_arm64")
+	CFlags         string                    // Global C/C++ compiler flags
+	LdFlags        string                    // Global linker flags
+	Sysroot        string                    // Cross-compilation sysroot path
+	Ccache         string                    // Path to ccache binary (empty if not used)
+	Lto            string                    // Default LTO mode ("full", "thin", or "")
+	GOOS           string                    // Go target OS (e.g., "linux")
+	GOARCH         string                    // Go target architecture (e.g., "amd64")
+	PathPrefix     string                    // Prefix for dependency file paths
 	Modules        map[string]*parser.Module // Map of all modules for dependency resolution
-	GoModulePath   string // Go module path
-	GoImportPrefix string // Go import prefix
-	ExportCFlags   string // Exported C flags from dependencies
-	ExportLdFlags  string // Exported linker flags from dependencies
+	GoModulePath   string                    // Go module path
+	GoImportPrefix string                    // Go import prefix
+	ExportCFlags   string                    // Exported C flags from dependencies
+	ExportLdFlags  string                    // Exported linker flags from dependencies
 }
 
 // DefaultRuleRenderContext returns a RuleRenderContext with default toolchain values.

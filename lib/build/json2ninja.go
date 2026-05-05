@@ -83,7 +83,9 @@ func GenerateFromBuildJSON(
 	// This evaluates top-level variable assignments (e.g., "my_var = "value"") and
 	// registers them in the evaluator's variable map. These variables can then be
 	// referenced in module properties via "${my_var}" syntax throughout the pipeline.
-	eval.ProcessAssignmentsFromDefs(allDefs)
+	if err := eval.ProcessAssignmentsFromDefs(allDefs); err != nil {
+		return 0, fmt.Errorf("process assignments: %w", err)
+	}
 
 	// Step3: Collect enabled modules from all definitions.
 	// This function performs several sub-steps:

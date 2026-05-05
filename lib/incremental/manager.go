@@ -543,10 +543,17 @@ func (m *Manager) LoadJSON(bpFile string) (*parser.File, error) {
 
 	// Try to read the cache file.
 	// A missing file is not an error; it just means cache miss.
-	data, err := os.ReadFile(jsonPath)
+	info, err := os.Stat(jsonPath)
 	if err != nil {
 		// Cache miss (file doesn't exist); this is not an error.
-		// Caller should reparse the file and call SaveJSON to cache it.
+		return nil, nil
+	}
+	const maxCacheFileSize = 10 << 20 // 10MB limit
+	if info.Size() > maxCacheFileSize {
+		return nil, fmt.Errorf("cache file too large: %s (%d bytes, max %d)", jsonPath, info.Size(), maxCacheFileSize)
+	}
+	data, err := os.ReadFile(jsonPath)
+	if err != nil {
 		return nil, nil
 	}
 

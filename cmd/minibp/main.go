@@ -200,7 +200,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 	// found in the parsed Blueprint files. After this call, the evaluator can
 	// resolve ${my_var} references in module properties and expressions.
 	// Variable scopes are handled per-file, with later assignments overriding earlier ones.
-	eval.ProcessAssignmentsFromDefs(allDefs)
+	if err := eval.ProcessAssignmentsFromDefs(allDefs); err != nil {
+		return fmt.Errorf("process assignments: %w", err)
+	}
 
 	// Persist dependency hashes for next incremental run.
 	// SaveDepFile writes the current file hashes to .minibp/dep.json,

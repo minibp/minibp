@@ -197,8 +197,8 @@ func (e *Evaluator) SetConfig(key, value string) {
 //
 // Parameters:
 //   - file: The parsed Blueprint file containing definitions
-func (e *Evaluator) ProcessAssignments(file *File) {
-	e.ProcessAssignmentsFromDefs(file.Defs)
+func (e *Evaluator) ProcessAssignments(file *File) error {
+	return e.ProcessAssignmentsFromDefs(file.Defs)
 }
 
 // ProcessAssignmentsFromDefs processes assignments from a list of definitions.
@@ -219,7 +219,7 @@ func (e *Evaluator) ProcessAssignments(file *File) {
 //   - First += on undefined variable creates the variable (treats as simple assignment)
 //   - Type mismatches in += (e.g., string += list) may cause unexpected behavior
 //   - Only string, []string, and []interface{} types are handled for += operator
-func (e *Evaluator) ProcessAssignmentsFromDefs(defs []Definition) {
+func (e *Evaluator) ProcessAssignmentsFromDefs(defs []Definition) error {
 	for _, def := range defs {
 		// Type assert to check if this definition is an assignment.
 		// Non-assignment definitions (modules, etc.) are skipped.
@@ -239,11 +239,11 @@ func (e *Evaluator) ProcessAssignmentsFromDefs(defs []Definition) {
 				switch ev := existing.(type) {
 				case string:
 					// String concatenation: name += "suffix"
-					// Only concatenates if the new value is also a string
 					if nv, ok := val.(string); ok {
 						e.vars[assign.Name] = ev + nv
+					} else {
+						return fmt.Errorf("cannot append %T to string variable '%s'", val, assign.Name)
 					}
-					// If val is not string, the assignment is silently ignored
 				case []string:
 					// List concatenation with string: name += "item"
 					if nv, ok := val.(string); ok {
@@ -251,8 +251,9 @@ func (e *Evaluator) ProcessAssignmentsFromDefs(defs []Definition) {
 					} else if nv, ok := val.([]string); ok {
 						// List concatenation with list: name += ["a", "b"]
 						e.vars[assign.Name] = append(ev, nv...)
+					} else {
+						return fmt.Errorf("cannot append %T to []string variable '%s'", val, assign.Name)
 					}
-					// Other types are silently ignored
 				case []interface{}:
 					// Generic list concatenation
 					if nv, ok := val.([]interface{}); ok {
@@ -261,6 +262,8 @@ func (e *Evaluator) ProcessAssignmentsFromDefs(defs []Definition) {
 						// Append single value as interface{} (wraps scalar in list)
 						e.vars[assign.Name] = append(ev, val)
 					}
+				default:
+					return fmt.Errorf("cannot += to variable '%s' of type %T", assign.Name, existing)
 				}
 			} else {
 				// First += creates the variable (treat as simple assignment)
@@ -272,6 +275,7 @@ func (e *Evaluator) ProcessAssignmentsFromDefs(defs []Definition) {
 			e.vars[assign.Name] = val
 		}
 	}
+	return nil
 }
 
 // Eval evaluates an Expression and returns its Go value.
@@ -615,6 +619,10 @@ func (e *Evaluator) interpolateString(s string) string {
 		val, ok := e.vars[name]
 		if !ok {
 			return match // Variable not found, leave pattern unchanged
+		}
+		// Nil value: leave pattern unchanged to avoid outputting "nil" literal
+		if val == nil {
+			return match
 		}
 		// Convert value to string using default formatting
 		return fmt.Sprintf("%v", val)
@@ -962,6 +970,7 @@ func (e *Evaluator) isConfigUnset(val interface{}) bool {
 //   - Function arguments are evaluated recursively (supports variable references in args)
 //   - For soong_config_variable, checks both "namespace.variable" and "soong_config.namespace.variable"
 //   - The fallback to config[FunctionName] allows extensibility for custom conditions
+//
 // selectCondHandler is a function type for handling select condition evaluation.
 // Each handler takes an Evaluator instance and a ConfigurableCondition AST node,
 // returning the evaluated condition value or nil if not found.

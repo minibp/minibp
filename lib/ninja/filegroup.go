@@ -253,9 +253,9 @@ func (r *filegroup) NinjaEdge(m *parser.Module, ctx RuleRenderContext) string {
 	// Build edges are accumulated and returned as a single string.
 	var edges strings.Builder
 	for _, src := range srcs {
-		safeName := pathutil.SanitizePath(name) // Sanitize module name to prevent path traversal attacks
-		safeSrc := pathutil.SanitizePath(filepath.Base(src)) // Sanitize source basename, strip directory components
-		out := filepath.Join(safeName, safeSrc) // Construct output path: {module_name}/{source_basename}
+		safeName := pathutil.SanitizePath(name)                                   // Sanitize module name to prevent path traversal attacks
+		safeSrc := pathutil.SanitizePath(filepath.Base(src))                      // Sanitize source basename, strip directory components
+		out := filepath.Join(safeName, safeSrc)                                   // Construct output path: {module_name}/{source_basename}
 		edges.WriteString(fmt.Sprintf("build %s: filegroup_copy %s\n", out, src)) // Generate Ninja build edge for file copy
 	}
 	return edges.String()
@@ -475,7 +475,7 @@ func (r *filegroupStatic) NinjaEdge(m *parser.Module, ctx RuleRenderContext) str
 	}
 
 	var edges strings.Builder
-	out := name + ".static" // Construct output filename with ".static" extension
+	out := name + ".static"                                                                         // Construct output filename with ".static" extension
 	edges.WriteString(fmt.Sprintf("build %s: filegroup_static %s\n", out, strings.Join(srcs, " "))) // Generate single build edge with all sources
 	return edges.String()
 }

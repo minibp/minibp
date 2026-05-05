@@ -99,7 +99,7 @@ func ExpandInModule(m *parser.Module, baseDir string) error {
 										expandedSrcs = append(expandedSrcs, &parser.String{Value: match})
 									}
 								}
-						} else { // Cache miss, expand pattern and update cache
+							} else { // Cache miss, expand pattern and update cache
 								// Fallback to individual expansion if not in cache
 								matches, err := expandGlob(pattern, baseDir)
 								if err != nil {
@@ -112,8 +112,8 @@ func ExpandInModule(m *parser.Module, baseDir string) error {
 									}
 								}
 							}
-					} else { // Non-glob pattern, add as-is without expansion
-						if !seen[pattern] { // Avoid duplicate source entries
+						} else { // Non-glob pattern, add as-is without expansion
+							if !seen[pattern] { // Avoid duplicate source entries
 								seen[pattern] = true
 								expandedSrcs = append(expandedSrcs, v)
 							}
@@ -151,9 +151,9 @@ func ExpandGlobs(modules map[string]*parser.Module, baseDir string) error {
 		}
 		for _, prop := range m.Map.Properties {
 			if prop.Name == "srcs" { // Only process srcs properties
-		if l, ok := prop.Value.(*parser.List); ok { // Check if srcs is a list type
+				if l, ok := prop.Value.(*parser.List); ok { // Check if srcs is a list type
 					for _, v := range l.Values {
-			if s, ok := v.(*parser.String); ok { // Only process string values in srcs list
+						if s, ok := v.(*parser.String); ok { // Only process string values in srcs list
 							if strings.Contains(s.Value, "*") { // Collect glob patterns for batch expansion
 								patterns[s.Value] = true
 							}

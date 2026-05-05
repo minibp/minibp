@@ -84,9 +84,9 @@ func NewWriter(w io.Writer) *Writer {
 	case *bytes.Buffer, *strings.Builder:
 		// Don't buffer strings.Builder or bytes.Buffer
 	default:
-	if _, ok := w.(*bufio.Writer); !ok { // Wrap non-buffered writers with 64KB buffer
-		w = bufio.NewWriterSize(w, 64*1024)
-	}
+		if _, ok := w.(*bufio.Writer); !ok { // Wrap non-buffered writers with 64KB buffer
+			w = bufio.NewWriterSize(w, 64*1024)
+		}
 	}
 	return &Writer{w: w}
 }
@@ -142,18 +142,21 @@ func (w *Writer) Flush() error {
 // ninjaEscapeReplacer is a pre-initialized string replacer for escaping Ninja special characters.
 // It is defined as a package-level variable to avoid re-creating the replacer on every
 // call to ninjaEscape, improving performance for frequent escape operations.
-// The replacer handles three critical Ninja escape sequences:
+// The replacer handles critical Ninja escape sequences:
 //   - "$" → "$$" (escape dollar sign for literal $ in Ninja)
 //   - ":" → "$:" (escape colon which is a Ninja syntax separator)
 //   - "#" → "$#" (escape hash which starts comments in Ninja)
+//   - "\n" → "$\n" (escape newline to prevent injecting extra ninja lines)
+//   - "\r" → "" (strip carriage return to prevent line corruption)
 var ninjaEscapeReplacer = strings.NewReplacer(
 	"$", "$$",
 	":", "$:",
 	"#", "$#",
+	"\r", "",
 )
 
 func ninjaEscape(s string) string {
-	return ninjaEscapeReplacer.Replace(s)
+	return strings.ReplaceAll(ninjaEscapeReplacer.Replace(s), "\n", "$\n")
 }
 
 // ninjaEscapePath escapes a path for use in Ninja build files.

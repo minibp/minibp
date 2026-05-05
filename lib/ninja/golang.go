@@ -991,7 +991,7 @@ func goShellCmd(envVar string, args ...string) string {
 //   - Escaped string safe for use as a single shell argument
 //
 // Edge cases:
-//   - Empty string: Returns "''" (empty quoted string)
+//   - Empty string: Returns "”" (empty quoted string)
 //   - String with no special characters: Returns the original string unchanged
 //   - String with spaces, quotes, $, etc.: Wrapped in single quotes with internal quotes escaped
 func shellWord(s string) string {

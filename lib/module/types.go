@@ -51,6 +51,7 @@ import (
 //   - If it's a literal parser.String, append its Value directly
 //   - If it's an expression and eval is provided, evaluate it first
 //   - Only append if evaluation produces a string
+//
 // Returns empty slice if property not found or not a list.
 //
 // Parameters:
@@ -326,11 +327,11 @@ func collectDeps(ast *parser.Map, eval *parser.Evaluator) []string {
 //   - Fields are always populated (empty strings/slices for missing properties)
 func baseModuleFromAST(ast *parser.Module, eval *parser.Evaluator) BaseModule {
 	return BaseModule{
-		Name_:  extractString(ast.Map, "name", eval),                        // Module name from "name" property
-		Type_:  ast.Type,                                                    // Module type from AST
-		Srcs_:  extractStringList(ast.Map, "srcs", eval),                   // Source files from "srcs"
-		Deps_:  collectDeps(ast.Map, eval),                                 // Dependencies from deps/shared_libs/header_libs
-		Props_: extractAllProps(ast.Map, eval),                              // All other properties
+		Name_:  extractString(ast.Map, "name", eval),     // Module name from "name" property
+		Type_:  ast.Type,                                 // Module type from AST
+		Srcs_:  extractStringList(ast.Map, "srcs", eval), // Source files from "srcs"
+		Deps_:  collectDeps(ast.Map, eval),               // Dependencies from deps/shared_libs/header_libs
+		Props_: extractAllProps(ast.Map, eval),           // All other properties
 	}
 }
 
